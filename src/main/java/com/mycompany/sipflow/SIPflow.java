@@ -9,11 +9,14 @@ package com.mycompany.sipflow;
  *+
  * @author palmerg
  */
+
 import com.googlecode.lanterna.gui2.BasicWindow;
 import com.googlecode.lanterna.gui2.Button;
 import com.googlecode.lanterna.gui2.Label;
 import com.googlecode.lanterna.gui2.MultiWindowTextGUI;
 import com.googlecode.lanterna.gui2.Panel;
+import com.googlecode.lanterna.gui2.TextGUIThread;
+import com.googlecode.lanterna.gui2.TextGUI;
 import com.googlecode.lanterna.gui2.WindowBasedTextGUI;
 import com.googlecode.lanterna.gui2.table.Table;
 import com.googlecode.lanterna.screen.Screen;
@@ -21,6 +24,7 @@ import com.googlecode.lanterna.screen.TerminalScreen;
 import com.googlecode.lanterna.terminal.DefaultTerminalFactory;
 import com.googlecode.lanterna.terminal.Terminal;
 import java.io.BufferedReader;
+import java.io.EOFException;
 import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
@@ -108,13 +112,41 @@ public class SIPflow {
             synchronized(guiReadyMonitor){guiReadyMonitor.notify();}
             panelA.addComponent(table);
             windowA.setComponent(panelA);
-            //synchronized(callTableMonitor){
-            textGUI.addWindowAndWait(windowA);
-            //}
+            
+            textGUI.addWindow(windowA);
+            waitForTextGUI(windowA);
+            
         } catch (IOException ex) {
             Logger.getLogger(SIPflow.class.getName()).log(Level.SEVERE, null, ex);
         }
 
+    }
+    
+    public void waitForTextGUI(BasicWindow window) {
+        while(window.getTextGUI() != null) {
+            boolean sleep = true;
+            TextGUIThread guiThread = textGUI.getGUIThread();
+            
+                try {
+                    sleep = !guiThread.processEventsAndUpdate();
+                }
+                catch(EOFException ignore) {
+                    //The GUI has closed so allow exit
+                    break;
+                }
+                catch(IOException e) {
+                    throw new RuntimeException("Unexpected IOException while waiting for window to close", e);
+                }
+            
+            if(sleep) {
+                try {
+                    Thread.sleep(1);
+                    int i = sipCallList.size() - 1;
+                    DisplayCall(sipCallList.get(i),callFilter);
+                }
+                catch(InterruptedException ignore) {}
+            }
+        }
     }
 
     void ReadInput(Reader inputReader) throws InterruptedException {
@@ -217,9 +249,8 @@ public class SIPflow {
             
             if (!callIdWasFound ) {
                 sipCallList.add(new SipCall(inputSipMessage.getCallID(),inputSipMessage));                
-                synchronized(callTableMonitor){callTableMonitor.notify();}
-                int i = sipCallList.size() - 1;
-                DisplayCall(sipCallList.get(i),callFilter);
+                //synchronized(callTableMonitor){callTableMonitor.notify();}
+                
                 
             }
 	}
@@ -249,6 +280,7 @@ public class SIPflow {
             }
             if(callMatches){
                 
+                {    
                     table.getTableModel().addRow(
                             "[ ]",
                             tableStartDateFormat.format(inputCall.getStartTime()),
@@ -261,7 +293,7 @@ public class SIPflow {
                             inputCall.getLastCseq(),
                             inputCall.getCallId()
                     );
-                
+                }
             }
     }
         
