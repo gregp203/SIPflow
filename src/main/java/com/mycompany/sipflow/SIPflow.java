@@ -16,13 +16,13 @@ import com.googlecode.lanterna.gui2.Borders;
 import com.googlecode.lanterna.gui2.Button;
 import com.googlecode.lanterna.gui2.CheckBoxList;
 import com.googlecode.lanterna.gui2.Direction;
-import com.googlecode.lanterna.gui2.Interactable;
+import com.googlecode.lanterna.gui2.LinearLayout;import com.googlecode.lanterna.gui2.Interactable;
 import com.googlecode.lanterna.gui2.Label;
-import com.googlecode.lanterna.gui2.LinearLayout;
 import com.googlecode.lanterna.gui2.MultiWindowTextGUI;
 import com.googlecode.lanterna.gui2.Panel;
+import com.googlecode.lanterna.gui2.RadioBoxList;
 import com.googlecode.lanterna.gui2.TextGUIThread;
-import com.googlecode.lanterna.gui2.TextGUI;
+import com.googlecode.lanterna.gui2.Window;
 import com.googlecode.lanterna.gui2.WindowBasedTextGUI;
 import com.googlecode.lanterna.gui2.table.Table;
 import com.googlecode.lanterna.screen.Screen;
@@ -39,9 +39,9 @@ import java.text.DateFormat;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.List;
-import java.util.concurrent.locks.Lock;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
@@ -60,7 +60,8 @@ public class SIPflow {
     Panel mainPanel;
     Panel callsPanel;
     Panel buttonPanel;
-    Panel methodPannel;
+    Panel methodPanel;
+    Panel sortPanel;
     Panel inputStatusPannel;
     Table<String> table;
     Terminal term;
@@ -104,11 +105,13 @@ public class SIPflow {
             screen.startScreen();
             
             windowA = new BasicWindow();
-            
+            windowA.setHints(Arrays.asList(Window.Hint.NO_DECORATIONS));
+          
             mainPanel = new Panel();
             callsPanel = new Panel();
             buttonPanel = new Panel();
-            methodPannel= new Panel();
+            methodPanel= new Panel();
+            sortPanel= new Panel();
             inputStatusPannel = new Panel();
             
             inputStatusLabel = new Label("");
@@ -124,6 +127,7 @@ public class SIPflow {
                     "Last CSeq",
                     "Call-ID"
             ); 
+            table.setVisibleRows(20);
             table.setSelectAction(new Runnable() {
 		@Override
 		public void run() {
@@ -151,24 +155,53 @@ public class SIPflow {
             Button methodApplylButton = new Button("Apply", new Runnable() {
 		@Override
 		public void run() {
-			refreshCallTable();
+                    refreshCallTable();
 		}
             });
             
-            Button startButton = new Button("Start", new Runnable() {
+            TerminalSize sortRadioBoxSize = new TerminalSize(16, 4);
+            RadioBoxList<String> sortRadioBox = new RadioBoxList<String>(sortRadioBoxSize);
+            sortRadioBox.addItem("Start Time");
+            sortRadioBox.addItem("End Time");
+            sortRadioBox.addItem("From");
+            sortRadioBox.addItem("To");
+            
+            Button sortApplylButton = new Button("Apply", new Runnable() {
 		@Override
 		public void run() {
-			// Actions go here
+                    synchronized(sipCallListMonitor){
+                        switch (sortRadioBox.getCheckedItem()){
+                            
+                            case "Start Time" :
+                                sipCallList.sort((call1, call2) -> {
+                                        return call1.getStartTime().compareTo(call2.getStartTime());
+                                    });
+                                break;
+                            
+                            case "End Time" :
+                                sipCallList.sort((call1, call2) -> {
+                                        return call1.getEndTime().compareTo(call2.getEndTime());
+                                    });
+                                break;
+                                
+                            case "From" :
+                                sipCallList.sort((call1, call2) -> {
+                                        return call1.getFromAorUser().compareTo(call2.getFromAorUser());
+                                    });
+                                break;
+                                
+                            case "To" :
+                                sipCallList.sort((call1, call2) -> {
+                                        return call1.getToAorUser().compareTo(call2.getToAorUser());
+                                    });
+                                break;
+                        }        
+                    }
+                    refreshCallTable();
 		}
             });
             
-            Button stopButton = new Button("Stop", new Runnable() {
-		@Override
-		public void run() {
-			// Actions go here
-		}
-            });
-            
+                        
             Button filterButton = new Button("Filter", new Runnable() {
 		@Override
 		public void run() {
@@ -187,14 +220,18 @@ public class SIPflow {
             
             mainPanel.setLayoutManager(new LinearLayout(Direction.VERTICAL));
             
-            methodPannel.setLayoutManager(new LinearLayout(Direction.VERTICAL));
-            methodPannel.addComponent(methodCheckBox);
-            methodPannel.addComponent(methodApplylButton);
+            methodPanel.setLayoutManager(new LinearLayout(Direction.VERTICAL));
+            methodPanel.addComponent(methodCheckBox);
+            methodPanel.addComponent(methodApplylButton);
+            
+            sortPanel.setLayoutManager(new LinearLayout(Direction.VERTICAL));
+            sortPanel.addComponent(sortRadioBox);
+            sortPanel.addComponent(sortApplylButton);
                         
             buttonPanel.setLayoutManager(new LinearLayout(Direction.HORIZONTAL));
-            buttonPanel.addComponent(methodPannel.withBorder(Borders.singleLine("Methods")));
-            buttonPanel.addComponent(startButton);
-            buttonPanel.addComponent(stopButton);
+            buttonPanel.addComponent(methodPanel.withBorder(Borders.singleLine("Methods")));
+            buttonPanel.addComponent(sortPanel.withBorder(Borders.singleLine("Sort")));
+            
             buttonPanel.addComponent(filterButton);            
             buttonPanel.addComponent(flowButton);
             
@@ -240,7 +277,7 @@ public class SIPflow {
                     synchronized(callTableMonitor){
                         for(;newCalls >0;newCalls--){
                             int i = sipCallList.size() - newCalls;
-                            UpdateCallTable(sipCallList.get(i),callFilter);
+                            addToCallTable(sipCallList.get(i),callFilter);
                         }
                     }
                     updateInputStauts();
@@ -262,14 +299,16 @@ public class SIPflow {
         selectedCallIds.clear();
         methodFilter.clear();
         synchronized(callTableMonitor){
-            int tableLength = table.getSize().getRows();
-            for (int i =tableLength; i>1; i--) {
+            int tableLength = table.getTableModel().getRowCount();
+            for (int i =tableLength; i>0; i--) {
                 table.getTableModel().removeRow(0);
             } 
         }
         methodFilter = methodCheckBox.getCheckedItems();
-        for(int i= 0; i<sipCallList.size();i++){
-            UpdateCallTable(sipCallList.get(i),callFilter);
+        synchronized(sipCallListMonitor){
+            for(int i= 0; i<sipCallList.size();i++){
+                addToCallTable(sipCallList.get(i),callFilter);
+            }
         }
     }
     
@@ -384,7 +423,7 @@ public class SIPflow {
         }
     }
     
-    private void UpdateCallTable(SipCall inputCall,SipCallDisplay filter){
+    private void addToCallTable(SipCall inputCall,SipCallDisplay filter){
             boolean callMatches = false;
             if(methodFilter.contains(inputCall.getMethod())){
                 if(filter.IsAllNull()) callMatches = true;
@@ -664,7 +703,7 @@ public class SIPflow {
             Pattern sdpCodecPattern = Pattern.compile("(?<=RTP\\/AVP )\\d*",Pattern.MULTILINE);
             Pattern uaPattern = Pattern.compile("(?<=User-Agent:)\\s*(?<ua>.*)",Pattern.MULTILINE);
             Pattern serverPattern = Pattern.compile("(?<=Server:)\\s*(?<server>.*)",Pattern.MULTILINE);
-            Pattern cSeqPattern = Pattern.compile("CSeq:\\s?(\\d{1,3})\\s?(\\w*)",Pattern.MULTILINE);		
+            Pattern cSeqPattern = Pattern.compile("CSeq:\\s?(?<cseq>(\\d{1,3})\\s?(\\w*))",Pattern.MULTILINE);		
 
             Matcher reqMatcher = reqPattern.matcher(message);
             Matcher callIDMatcher = callIDPattern.matcher(message);
@@ -715,7 +754,7 @@ public class SIPflow {
                     }
             }
             if(cSeqMatcher.find()) {
-                    cSeq = cSeqMatcher.group(0);
+                    cSeq = cSeqMatcher.group("cseq");
             }
 	}
 
