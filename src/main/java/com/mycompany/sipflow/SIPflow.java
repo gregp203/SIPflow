@@ -10,9 +10,15 @@ package com.mycompany.sipflow;
  * @author palmerg
  */
 
+import com.googlecode.lanterna.TerminalSize;
 import com.googlecode.lanterna.gui2.BasicWindow;
+import com.googlecode.lanterna.gui2.Borders;
 import com.googlecode.lanterna.gui2.Button;
+import com.googlecode.lanterna.gui2.CheckBoxList;
+import com.googlecode.lanterna.gui2.Direction;
+import com.googlecode.lanterna.gui2.Interactable;
 import com.googlecode.lanterna.gui2.Label;
+import com.googlecode.lanterna.gui2.LinearLayout;
 import com.googlecode.lanterna.gui2.MultiWindowTextGUI;
 import com.googlecode.lanterna.gui2.Panel;
 import com.googlecode.lanterna.gui2.TextGUIThread;
@@ -45,29 +51,41 @@ public class SIPflow {
 	
     
     List<SipCall> sipCallList;
-    //private static final Lock callListLock = new ReentrantLock(true);
+    List<String> selectedCallIds;
+    private final Object sipCallListMonitor = new Object();
+    int numSipMsg;
+    private final Object numSipMsgMonitor = new Object();
     WindowBasedTextGUI textGUI;
     BasicWindow windowA;
-    Panel panelA;
+    Panel mainPanel;
+    Panel callsPanel;
+    Panel buttonPanel;
+    Panel methodPannel;
+    Panel inputStatusPannel;
     Table<String> table;
     Terminal term;
     Screen screen;
-    boolean guiIsReady;
-    private final Object guiReadyMonitor = new Object();
+    Label inputStatusLabel;
+    
     private final Object callTableMonitor = new Object();
     DateFormat tableStartDateFormat;
     DateFormat tableEndDateFormat;
     SipCallDisplay callFilter;
     List<String> methodFilter;
+    CheckBoxList<String> methodCheckBox;
+    int newCalls;
 
     public SIPflow() {      
         sipCallList = new ArrayList<SipCall>();
         callFilter = new SipCallDisplay();
+        selectedCallIds = new ArrayList<String>();
         tableStartDateFormat = new SimpleDateFormat("yyyy-MM-dd'@'HH:mm:ss.SSSZ");
         tableEndDateFormat = new SimpleDateFormat("yyyy-MM-dd'@'HH:mm:ss");
         methodFilter = new ArrayList<String>();
-        methodFilter.add("INVITE");
+        //methodFilter.add("INVITE");
         new GuiThread(this);
+        newCalls=0;
+        numSipMsg=0;
     }
 
     public static void main(String[] args) throws IOException, InterruptedException {		
@@ -79,13 +97,21 @@ public class SIPflow {
     void Gui() throws InterruptedException, IOException{
 
         try {
-            guiIsReady=false;
+            
             term = new DefaultTerminalFactory().createTerminal();
             screen = new TerminalScreen(term);
             textGUI = new MultiWindowTextGUI(screen);
             screen.startScreen();
-            windowA = new BasicWindow("window - A");
-            panelA = new Panel();                
+            
+            windowA = new BasicWindow();
+            
+            mainPanel = new Panel();
+            callsPanel = new Panel();
+            buttonPanel = new Panel();
+            methodPannel= new Panel();
+            inputStatusPannel = new Panel();
+            
+            inputStatusLabel = new Label("");
             table = new Table<String>(
                     "*",
                     "Start Time", 
@@ -103,15 +129,85 @@ public class SIPflow {
 		public void run() {
                     if(table.getTableModel().getCell(0, table.getSelectedRow()).equals("[x]")){
                         table.getTableModel().setCell(0, table.getSelectedRow(), "[ ]");
+                        selectedCallIds.remove(table.getTableModel().getCell(9, table.getSelectedRow()));
                     }
                     else{
                         table.getTableModel().setCell(0, table.getSelectedRow(), "[x]");
+                        selectedCallIds.add(table.getTableModel().getCell(9, table.getSelectedRow()));
                     }
 		}		
             });
-            synchronized(guiReadyMonitor){guiReadyMonitor.notify();}
-            panelA.addComponent(table);
-            windowA.setComponent(panelA);
+            
+            TerminalSize methodCheckBoxsize = new TerminalSize(16, 5);
+            methodCheckBox= new CheckBoxList<String>(methodCheckBoxsize);
+            methodCheckBox.addItem("INVITE");
+            methodCheckBox.addItem("NOTIFY");
+            methodCheckBox.addItem("OPTIONS");
+            methodCheckBox.addItem("REGISTER");
+            methodCheckBox.addItem("SUBSCRIBE");
+            methodCheckBox.setChecked("INVITE", true);
+            methodFilter = methodCheckBox.getCheckedItems();
+            
+            Button methodApplylButton = new Button("Apply", new Runnable() {
+		@Override
+		public void run() {
+			refreshCallTable();
+		}
+            });
+            
+            Button startButton = new Button("Start", new Runnable() {
+		@Override
+		public void run() {
+			// Actions go here
+		}
+            });
+            
+            Button stopButton = new Button("Stop", new Runnable() {
+		@Override
+		public void run() {
+			// Actions go here
+		}
+            });
+            
+            Button filterButton = new Button("Filter", new Runnable() {
+		@Override
+		public void run() {
+			// Actions go here
+		}
+            });
+            
+            Button flowButton = new Button("Flow", new Runnable() {
+		@Override
+		public void run() {
+			// Actions go here
+		}
+            });
+            
+            
+            
+            mainPanel.setLayoutManager(new LinearLayout(Direction.VERTICAL));
+            
+            methodPannel.setLayoutManager(new LinearLayout(Direction.VERTICAL));
+            methodPannel.addComponent(methodCheckBox);
+            methodPannel.addComponent(methodApplylButton);
+                        
+            buttonPanel.setLayoutManager(new LinearLayout(Direction.HORIZONTAL));
+            buttonPanel.addComponent(methodPannel.withBorder(Borders.singleLine("Methods")));
+            buttonPanel.addComponent(startButton);
+            buttonPanel.addComponent(stopButton);
+            buttonPanel.addComponent(filterButton);            
+            buttonPanel.addComponent(flowButton);
+            
+            
+            inputStatusPannel.addComponent(inputStatusLabel);           
+            
+            callsPanel.addComponent(table);
+            
+            mainPanel.addComponent(buttonPanel.withBorder(Borders.singleLine("Buttons")));
+            mainPanel.addComponent(inputStatusPannel.withBorder(Borders.singleLine("Input")));
+            mainPanel.addComponent(callsPanel.withBorder(Borders.singleLine("Calls")));                    
+            
+            windowA.setComponent(mainPanel);            
             
             textGUI.addWindow(windowA);
             waitForTextGUI(windowA);
@@ -122,7 +218,7 @@ public class SIPflow {
 
     }
     
-    public void waitForTextGUI(BasicWindow window) {
+    void waitForTextGUI(BasicWindow window) {
         while(window.getTextGUI() != null) {
             boolean sleep = true;
             TextGUIThread guiThread = textGUI.getGUIThread();
@@ -141,18 +237,47 @@ public class SIPflow {
             if(sleep) {
                 try {
                     Thread.sleep(1);
-                    int i = sipCallList.size() - 1;
-                    DisplayCall(sipCallList.get(i),callFilter);
+                    synchronized(callTableMonitor){
+                        for(;newCalls >0;newCalls--){
+                            int i = sipCallList.size() - newCalls;
+                            UpdateCallTable(sipCallList.get(i),callFilter);
+                        }
+                    }
+                    updateInputStauts();
                 }
                 catch(InterruptedException ignore) {}
             }
         }
     }
+    
+    void updateInputStauts(){        
+        int numberOfMsg;
+        int numberOfCallIds;
+        synchronized(numSipMsgMonitor) {numberOfMsg = numSipMsg;}
+        synchronized(sipCallListMonitor){numberOfCallIds = sipCallList.size();}
+        inputStatusLabel.setText("Number of SIP messages found : "+ numberOfMsg +" Number of CallIDs found : "+ numberOfCallIds);
+    }
+    
+    void refreshCallTable(){
+        selectedCallIds.clear();
+        methodFilter.clear();
+        synchronized(callTableMonitor){
+            int tableLength = table.getSize().getRows();
+            for (int i =tableLength; i>1; i--) {
+                table.getTableModel().removeRow(0);
+            } 
+        }
+        methodFilter = methodCheckBox.getCheckedItems();
+        for(int i= 0; i<sipCallList.size();i++){
+            UpdateCallTable(sipCallList.get(i),callFilter);
+        }
+    }
+    
 
     void ReadInput(Reader inputReader) throws InterruptedException {
         //wait for GUI thread to be ready
-        synchronized(guiReadyMonitor) {guiReadyMonitor.wait();}
-
+        
+        
         SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd' 'HH:mm:ss.SSSXXX");
         String outMessage = "";		
         String outSrcIp = "";
@@ -237,25 +362,29 @@ public class SIPflow {
     }
         
     private void ParseSipCalls(SipMessage inputSipMessage) throws IOException, InterruptedException {
-            boolean callIdWasFound = false;
+         if(inputSipMessage.getCallID() != null){   
+             synchronized(numSipMsgMonitor) {numSipMsg++;}
+             boolean callIdWasFound = false;
             //find sipcall in sipcall list 
-            for(int i=0;i <sipCallList.size();i++) {			
-                if(inputSipMessage.getCallID().equals(sipCallList.get(i).getCallId())) {
-                    callIdWasFound = true;
-                    sipCallList.get(i).addSipMessage(inputSipMessage);                                
-                    break;
+            synchronized(sipCallListMonitor){
+                for(int i=0;i <sipCallList.size();i++) {			
+                    if(inputSipMessage.getCallID().equals(sipCallList.get(i).getCallId())) {
+                        callIdWasFound = true;
+                        sipCallList.get(i).addSipMessage(inputSipMessage);                                
+                        break;
+                    }
                 }
             }
             
             if (!callIdWasFound ) {
-                sipCallList.add(new SipCall(inputSipMessage.getCallID(),inputSipMessage));                
-                //synchronized(callTableMonitor){callTableMonitor.notify();}
-                
-                
+                synchronized(sipCallListMonitor){sipCallList.add(new SipCall(inputSipMessage.getCallID(),inputSipMessage));}               
+                //increment the number os new calls for the GUI to add to the table
+                synchronized(callTableMonitor){newCalls++;}
             }
-	}
+        }
+    }
     
-    private void DisplayCall(SipCall inputCall,SipCallDisplay filter){
+    private void UpdateCallTable(SipCall inputCall,SipCallDisplay filter){
             boolean callMatches = false;
             if(methodFilter.contains(inputCall.getMethod())){
                 if(filter.IsAllNull()) callMatches = true;
