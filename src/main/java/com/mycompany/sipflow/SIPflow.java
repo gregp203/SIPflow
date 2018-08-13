@@ -51,45 +51,43 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class SIPflow {
-	
     
     List<SipCall> sipCallList;
     List<String> selectedCallIds;
     private final Object sipCallListMonitor = new Object();
     int numSipMsg;
     private final Object numSipMsgMonitor = new Object();
-    WindowBasedTextGUI textGUI;
-    BasicWindow windowA;
-    Panel mainPanel;
-    Panel callsPanel;
-    Panel buttonPanel;
-    Panel methodPanel;
-    Panel sortPanel;
-    Panel inputStatusPannel;
-    Table<String> table;
-    Terminal term;
-    Screen screen;
-    Label inputStatusLabel;
-    
+    Table<String> callTable;
+    Label inputStatusLabel;    
     private final Object callTableMonitor = new Object();
     DateFormat tableStartDateFormat;
     DateFormat tableEndDateFormat;
+    SimpleDateFormat logDateFormat; 
     SipCallDisplay callFilter;
     List<String> methodFilter;
     CheckBoxList<String> methodCheckBox;
     int newCalls;
-
+    Date minDate;
+    Date maxDate;
+    
     public SIPflow() {      
         sipCallList = new ArrayList<SipCall>();
-        callFilter = new SipCallDisplay();
         selectedCallIds = new ArrayList<String>();
         tableStartDateFormat = new SimpleDateFormat("yyyy-MM-dd'@'HH:mm:ss.SSSZ");
         tableEndDateFormat = new SimpleDateFormat("yyyy-MM-dd'@'HH:mm:ss");
+        logDateFormat = new SimpleDateFormat("yyyy-MM-dd' 'HH:mm:ss.SSSXXX");
         methodFilter = new ArrayList<String>();
         //methodFilter.add("INVITE");
         new GuiThread(this);
         newCalls=0;
         numSipMsg=0;
+        try {
+            minDate = logDateFormat.parse(logDateFormat.format(new Date(Long.MIN_VALUE)));
+            maxDate = logDateFormat.parse(logDateFormat.format(new Date(Long.MAX_VALUE)));
+        } catch (ParseException ex) {
+            Logger.getLogger(SIPflow.class.getName()).log(Level.SEVERE, null, ex);
+        }
+        callFilter = new SipCallDisplay(minDate,maxDate);
     }
 
     public static void main(String[] args) throws IOException, InterruptedException {		
@@ -101,24 +99,22 @@ public class SIPflow {
     void Gui() throws InterruptedException, IOException{
 
         try {
-            
-            term = new DefaultTerminalFactory().createTerminal();
-            screen = new TerminalScreen(term);
-            textGUI = new MultiWindowTextGUI(screen);
+            Terminal term = new DefaultTerminalFactory().createTerminal();
+            Screen screen = new TerminalScreen(term);
+            WindowBasedTextGUI textGUI = new MultiWindowTextGUI(screen);
             screen.startScreen();
-            
-            windowA = new BasicWindow();
+            BasicWindow windowA = new BasicWindow();
             windowA.setHints(Arrays.asList(Window.Hint.NO_DECORATIONS));
           
-            mainPanel = new Panel();
-            callsPanel = new Panel();
-            buttonPanel = new Panel();
-            methodPanel= new Panel();
-            sortPanel= new Panel();
-            inputStatusPannel = new Panel();
+            Panel mainPanel = new Panel();
+            Panel callsPanel = new Panel();
+            Panel buttonPanel = new Panel();
+            Panel methodPanel= new Panel();
+            Panel sortPanel= new Panel();
+            Panel inputStatusPannel = new Panel();
             
             inputStatusLabel = new Label("");
-            table = new Table<String>(
+            callTable = new Table<String>(
                     "*",
                     "Start Time", 
                     "Time of Last Msg",
@@ -134,15 +130,15 @@ public class SIPflow {
             term.addResizeListener(termResizeHandler);
             int numRows =term.getTerminalSize().getRows();
             
-            table.setVisibleRows(numRows-19);
-            table.setSelectAction(()->  {
-                    if(table.getTableModel().getCell(0, table.getSelectedRow()).equals("[x]")){
-                        table.getTableModel().setCell(0, table.getSelectedRow(), "[ ]");
-                        selectedCallIds.remove(table.getTableModel().getCell(9, table.getSelectedRow()));
+            callTable.setVisibleRows(numRows-19);
+            callTable.setSelectAction(()->  {
+                    if(callTable.getTableModel().getCell(0, callTable.getSelectedRow()).equals("[x]")){
+                        callTable.getTableModel().setCell(0, callTable.getSelectedRow(), "[ ]");
+                        selectedCallIds.remove(callTable.getTableModel().getCell(9, callTable.getSelectedRow()));
                     }
                     else{
-                        table.getTableModel().setCell(0, table.getSelectedRow(), "[x]");
-                        selectedCallIds.add(table.getTableModel().getCell(9, table.getSelectedRow()));
+                        callTable.getTableModel().setCell(0, callTable.getSelectedRow(), "[x]");
+                        selectedCallIds.add(callTable.getTableModel().getCell(9, callTable.getSelectedRow()));
                     }
 		});
             
@@ -159,14 +155,13 @@ public class SIPflow {
             Button methodApplylButton = new Button("Apply", ()-> {
                     refreshCallTable();
 		});
-            
             TerminalSize sortRadioBoxSize = new TerminalSize(16, 4);
             RadioBoxList<String> sortRadioBox = new RadioBoxList<String>(sortRadioBoxSize);
             sortRadioBox.addItem("Start Time");
             sortRadioBox.addItem("End Time");
             sortRadioBox.addItem("From");
             sortRadioBox.addItem("To");
-            
+            sortRadioBox.setCheckedItem("Start Time");
             Button sortApplylButton = new Button("Apply", ()-> {
                     synchronized(sipCallListMonitor){
                         switch (sortRadioBox.getCheckedItem()){
@@ -198,35 +193,36 @@ public class SIPflow {
                     }
                     refreshCallTable();
 		});
-            
                         
             Button filterButton = new Button("Filter", ()-> {
 			BasicWindow filterWindow = new BasicWindow("Filter");
-                        
-                        TextBox startTimeTxtBox = new TextBox(new TerminalSize(30,1));
-                        TextBox endTimeTxtBox = new TextBox(new TerminalSize(30,1));
+                        TextBox startTimeTxtBox = new TextBox(new TerminalSize(30,1),logDateFormat.format(callFilter.getStartTime()));
+                        TextBox endTimeTxtBox = new TextBox(new TerminalSize(30,1),logDateFormat.format(callFilter.getEndTime()));
                         TextBox fromUserAorTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getFromAorUser());
                         TextBox fromUserNameTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getFromName());
-                        TextBox toUserAorTxtBox = new TextBox(new TerminalSize(30,1),callFilter.getToAorUser());
-                        TextBox toUserNameTxtBox = new TextBox(new TerminalSize(30,1),callFilter.getToName());
-                        TextBox uacIpTxtBox = new TextBox(new TerminalSize(30,1),callFilter.getUacIp());
-                        TextBox uacPortTxtBox = new TextBox(new TerminalSize(30,1),callFilter.getUacPort());
-                        TextBox uacSdpIpTxtBox = new TextBox(new TerminalSize(30,1),callFilter.getUacSdpIp());
-                        TextBox uacSdpPortTxtBox = new TextBox(new TerminalSize(30,1),callFilter.getUacSdpPort());
-                        TextBox uasIpTxtBox = new TextBox(new TerminalSize(30,1),callFilter.getUasIp());
-                        TextBox uasPortTxtBox = new TextBox(new TerminalSize(30,1),callFilter.getUasPort());
-                        TextBox uasSdpIpTxtBox = new TextBox(new TerminalSize(30,1),callFilter.getUasSdpIp());
-                        TextBox uasSdpPortTxtBox = new TextBox(new TerminalSize(30,1),callFilter.getUasSdpPort());
-                        TextBox callIdTxtBox = new TextBox(new TerminalSize(30,1),callFilter.getCallId());                   
-                        TextBox lastCseqTxtBox = new TextBox(new TerminalSize(30,1),callFilter.getLastCseq());
+                        TextBox toUserAorTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getToAorUser());
+                        TextBox toUserNameTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getToName());
+                        TextBox uacIpTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getUacIp());
+                        TextBox uacPortTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getUacPort());
+                        TextBox uacSdpIpTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getUacSdpIp());
+                        TextBox uacSdpPortTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getUacSdpPort());
+                        TextBox uasIpTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getUasIp());
+                        TextBox uasPortTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getUasPort());
+                        TextBox uasSdpIpTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getUasSdpIp());
+                        TextBox uasSdpPortTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getUasSdpPort());
+                        TextBox callIdTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getCallId());                   
+                        TextBox lastCseqTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getLastCseq());
                         Button filterApplyButton = new Button("Apply", ()-> {
                             try {
-                                if (!startTimeTxtBox.getText().isEmpty()) {
-                                    callFilter.setStartTime(tableStartDateFormat.parse(startTimeTxtBox.getText()));
+                                if (!startTimeTxtBox.getText().isEmpty() && 
+                                    !logDateFormat.parse(startTimeTxtBox.getText()).equals(minDate) ) {
+                                        callFilter.setStartTime(logDateFormat.parse(startTimeTxtBox.getText()));
                                 }
                                                                 
-                                if (!endTimeTxtBox.getText().isEmpty()) callFilter.setEndTime(tableStartDateFormat.parse(endTimeTxtBox.getText()));
-                                
+                                if (!endTimeTxtBox.getText().isEmpty()  && 
+                                    !logDateFormat.parse(endTimeTxtBox.getText()).equals(maxDate) ) {
+                                        callFilter.setEndTime(logDateFormat.parse(endTimeTxtBox.getText()));
+                                }
                                 callFilter.setFromAorUser(fromUserAorTxtBox.getText());
                                 callFilter.setFromName(fromUserNameTxtBox.getText());
                                 callFilter.setToAorUser(toUserAorTxtBox.getText());
@@ -247,6 +243,9 @@ public class SIPflow {
                                 Logger.getLogger(SIPflow.class.getName()).log(Level.SEVERE, null, ex);
                             }
                         }); 
+                        Button filterCancelButton = new Button("Cancel", ()-> {
+                            filterWindow.close();
+                        });
                         Panel filterPanel = new Panel();
                         filterPanel.setLayoutManager(new GridLayout(2));
                         filterPanel.addComponent(new Label("Start Time : "));
@@ -282,12 +281,11 @@ public class SIPflow {
                         filterPanel.addComponent(new Label("Last CSeq : "));
                         filterPanel.addComponent(lastCseqTxtBox);
                         filterPanel.addComponent(filterApplyButton);
+                        filterPanel.addComponent(filterCancelButton);
                         filterWindow.setComponent(filterPanel);
                         textGUI.addWindow(filterWindow);
                         waitForTextGUI(filterWindow);
             });
-            
-            
             
             Button flowButton = new Button("Flow", ()-> {
 			// Actions go here
@@ -311,7 +309,7 @@ public class SIPflow {
                         
             inputStatusPannel.addComponent(inputStatusLabel);           
             
-            callsPanel.addComponent(table);
+            callsPanel.addComponent(callTable);
             
             mainPanel.addComponent(buttonPanel.withBorder(Borders.singleLine("Buttons")));
             mainPanel.addComponent(inputStatusPannel.withBorder(Borders.singleLine("Input")));
@@ -325,24 +323,19 @@ public class SIPflow {
         } catch (IOException ex) {
             Logger.getLogger(SIPflow.class.getName()).log(Level.SEVERE, null, ex);
         }
-
     }
     
     private class TermResizeHandlerClass implements TerminalResizeListener{
-       
-                
         @Override
         public void onResized(Terminal terminal, TerminalSize newSize){
-            table.setVisibleRows(newSize.getRows()-19);
+            callTable.setVisibleRows(newSize.getRows()-19);
         }
     }
-    
-    
     
     void waitForTextGUI(BasicWindow window) {
         while(window.getTextGUI() != null) {
             boolean sleep = true;
-            TextGUIThread guiThread = textGUI.getGUIThread();
+            TextGUIThread guiThread = window.getTextGUI().getGUIThread();
             
                 try {
                     sleep = !guiThread.processEventsAndUpdate();
@@ -383,9 +376,9 @@ public class SIPflow {
         selectedCallIds.clear();
         methodFilter.clear();
         synchronized(callTableMonitor){
-            int tableLength = table.getTableModel().getRowCount();
+            int tableLength = callTable.getTableModel().getRowCount();
             for (int i =tableLength; i>0; i--) {
-                table.getTableModel().removeRow(0);
+                callTable.getTableModel().removeRow(0);
             } 
         }
         methodFilter = methodCheckBox.getCheckedItems();
@@ -396,12 +389,51 @@ public class SIPflow {
         }
     }
     
+    private void addToCallTable(SipCall inputCall,SipCallDisplay filter){
+            boolean callMatches = false;
+            if(methodFilter.contains(inputCall.getMethod())){
+                if(filter.IsAllNull(minDate,maxDate)) callMatches = true;
+                if(!callMatches && !filter.getCallId().isEmpty() && inputCall.getCallId().contains(filter.getCallId())) callMatches = true;
+                if(!callMatches && !filter.getStartTime().equals(minDate) && inputCall.getStartTime().after(filter.getStartTime())) callMatches = true;
+                if( inputCall.getEndTime()!=null && !callMatches && !filter.getEndTime().equals(maxDate) && inputCall.getEndTime().before(filter.getEndTime()) ) callMatches = true;
+                if(!callMatches && !filter.getToAorUser().isEmpty() && inputCall.getToAorUser().contains(filter.getToAorUser())) callMatches = true;
+                if(!callMatches && !filter.getToName().isEmpty() && inputCall.getToName().contains(filter.getToName())) callMatches = true;
+                if(!callMatches && !filter.getFromAorUser().isEmpty() && inputCall.getFromAorUser().contains(filter.getFromAorUser())) callMatches = true;
+                if(!callMatches && !filter.getFromName().isEmpty() && inputCall.getFromName().contains(filter.getFromName())) callMatches = true;
+                if(!callMatches && !filter.getUacIp().isEmpty() && inputCall.getUacIp().contains(filter.getUacIp())) callMatches = true;
+                if(!callMatches && !filter.getUacPort().isEmpty() && inputCall.getUacPort().contains(filter.getUacPort())) callMatches = true;
+                if(!callMatches && !filter.getUasIp().isEmpty() && inputCall.getUasIp().contains(filter.getUasIp())) callMatches = true;
+                if(!callMatches && !filter.getUasPort().isEmpty() && inputCall.getUasPort().contains(filter.getUasPort())) callMatches = true;                
+                if(!callMatches && !filter.getUacSdpIp().isEmpty() && inputCall.getUacSdpIp().contains(filter.getUacSdpIp())) callMatches = true;
+                if(!callMatches && !filter.getUacSdpPort().isEmpty() && inputCall.getUacSdpPort().contains(filter.getUacSdpPort())) callMatches = true;
+                if(!callMatches && !filter.getUacSdpCodec().isEmpty() && inputCall.getUacSdpCodec().contains(filter.getUacSdpCodec())) callMatches = true;
+                if(!callMatches && !filter.getUasSdpIp().isEmpty() && inputCall.getUasSdpIp().contains(filter.getUasSdpIp())) callMatches = true;
+                if(!callMatches && !filter.getUasSdpPort().isEmpty() && inputCall.getUasSdpPort().contains(filter.getUasSdpPort())) callMatches = true;
+                if(!callMatches && !filter.getUasSdpCodec().isEmpty() && inputCall.getUasSdpCodec().contains(filter.getUasSdpCodec())) callMatches = true;
+                if(!callMatches && !filter.getLastCseq().isEmpty() && inputCall.getLastCseq().contains(filter.getLastCseq())) callMatches = true;
+            }
+            if(callMatches){
+                
+                {    
+                    callTable.getTableModel().addRow(
+                            "[ ]",
+                            tableStartDateFormat.format(inputCall.getStartTime()),
+                            inputCall.getEndTime()!=null ? tableEndDateFormat.format(inputCall.getEndTime()):null,
+                            inputCall.getMethod(),
+                            inputCall.getFromAorUser(),
+                            inputCall.getToAorUser(),
+                            inputCall.getUacIp(),
+                            inputCall.getUasIp(),
+                            inputCall.getLastCseq(),
+                            inputCall.getCallId()
+                    );
+                }
+            }
+    }
 
     void ReadInput(Reader inputReader) throws InterruptedException {
         //wait for GUI thread to be ready
         
-        
-        SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd' 'HH:mm:ss.SSSXXX");
         String outMessage = "";		
         String outSrcIp = "";
         String outSrcPort = "";
@@ -420,7 +452,7 @@ public class SIPflow {
         boolean foundNextMsg = false;
 
         try {
-            Date outTimeDateStamp = dateFormat.parse("2000-01-01 00:00:00.000-00:00");
+            Date outTimeDateStamp = logDateFormat.parse("2000-01-01 00:00:00.000-00:00");
             //loop trough all data
             while (foundNextMsg||((lineRead=inputBuffered.readLine()) != null))
             {
@@ -433,7 +465,7 @@ public class SIPflow {
                     //find time date stamp
                     dateMatcher.reset(lineRead);
                     if (dateMatcher.find()) {
-                            outTimeDateStamp=dateFormat.parse(dateMatcher.group("date")+dateMatcher.group("tz"));
+                            outTimeDateStamp=logDateFormat.parse(dateMatcher.group("date")+dateMatcher.group("tz"));
                     }
                     //find source ip and port
                     srcIpMatcher.reset(lineRead);
@@ -506,52 +538,7 @@ public class SIPflow {
             }
         }
     }
-    
-    private void addToCallTable(SipCall inputCall,SipCallDisplay filter){
-            boolean callMatches = false;
-            if(methodFilter.contains(inputCall.getMethod())){
-                if(filter.IsAllNull()) callMatches = true;
-                if(!callMatches && !filter.getCallId().isEmpty() && inputCall.getCallId().contains(filter.getCallId())) callMatches = true;
-                if(!callMatches && !filter.getStartTime().equals(new Date(Long.MIN_VALUE)) && inputCall.getStartTime().after(filter.getStartTime())) callMatches = true;
-                if(!callMatches && !filter.getEndTime().equals(new Date(Long.MAX_VALUE)) && inputCall.getEndTime().before(filter.getEndTime())) callMatches = true;
-                if(!callMatches && !filter.getToAorUser().isEmpty() && inputCall.getToAorUser().contains(filter.getToAorUser())) callMatches = true;
-                if(!callMatches && !filter.getToName().isEmpty() && inputCall.getToName().contains(filter.getToName())) callMatches = true;
-                if(!callMatches && !filter.getFromAorUser().isEmpty() && inputCall.getFromAorUser().contains(filter.getFromAorUser())) callMatches = true;
-                if(!callMatches && !filter.getFromName().isEmpty() && inputCall.getFromName().contains(filter.getFromName())) callMatches = true;
-                if(!callMatches && !filter.getUacIp().isEmpty() && inputCall.getUacIp().contains(filter.getUacIp())) callMatches = true;
-                if(!callMatches && !filter.getUacPort().isEmpty() && inputCall.getUacPort().contains(filter.getUacPort())) callMatches = true;
-                if(!callMatches && !filter.getUasIp().isEmpty() && inputCall.getUasIp().contains(filter.getUasIp())) callMatches = true;
-                if(!callMatches && !filter.getUasPort().isEmpty() && inputCall.getUasPort().contains(filter.getUasPort())) callMatches = true;                
-                if(!callMatches && !filter.getUacSdpIp().isEmpty() && inputCall.getUacSdpIp().contains(filter.getUacSdpIp())) callMatches = true;
-                if(!callMatches && !filter.getUacSdpPort().isEmpty() && inputCall.getUacSdpPort().contains(filter.getUacSdpPort())) callMatches = true;
-                if(!callMatches && !filter.getUacSdpCodec().isEmpty() && inputCall.getUacSdpCodec().contains(filter.getUacSdpCodec())) callMatches = true;
-                if(!callMatches && !filter.getUasSdpIp().isEmpty() && inputCall.getUasSdpIp().contains(filter.getUasSdpIp())) callMatches = true;
-                if(!callMatches && !filter.getUasSdpPort().isEmpty() && inputCall.getUasSdpPort().contains(filter.getUasSdpPort())) callMatches = true;
-                if(!callMatches && !filter.getUasSdpCodec().isEmpty() && inputCall.getUasSdpCodec().contains(filter.getUasSdpCodec())) callMatches = true;
-                if(!callMatches && !filter.getLastCseq().isEmpty() && inputCall.getLastCseq().contains(filter.getLastCseq())) callMatches = true;
-            }
-            if(callMatches){
-                
-                {    
-                    table.getTableModel().addRow(
-                            "[ ]",
-                            tableStartDateFormat.format(inputCall.getStartTime()),
-                            inputCall.getEndTime()!=null ? tableEndDateFormat.format(inputCall.getEndTime()):null,
-                            inputCall.getMethod(),
-                            inputCall.getFromAorUser(),
-                            inputCall.getToAorUser(),
-                            inputCall.getUacIp(),
-                            inputCall.getUasIp(),
-                            inputCall.getLastCseq(),
-                            inputCall.getCallId()
-                    );
-                }
-            }
-    }
         
-    
-        
-
     private static class SipCall {
         
         private String callId;
@@ -715,10 +702,6 @@ public class SIPflow {
 	public List<SipMessage> getSipMessages() {
 		return sipMessages;
 	}
-        
-        
-        
-        
 
         @Override
         public String toString() {
@@ -760,7 +743,6 @@ public class SIPflow {
 	private String cSeq;
 	private String message;
         
-
 	SipMessage(
                     String inputMessage,
                     Date inputTimeDateStamp,
@@ -775,7 +757,6 @@ public class SIPflow {
             srcPort = inputSrcPort;
             dstIp = inputDstIp;
             dstPort = inputDstPort;
-            
 
             Pattern reqPattern = Pattern.compile("((?<method>(ACK|BYE|CANCEL|INFO|INVITE|MESSGAGE|NOTIFY|OPTIONS|PRACK|PUBLISH|REFER|REGISTER|SUBSCRIBE|UPDATE))\\s+(?<uri>.*)\\s+(SIP\\/2.0)$)|SIP\\/2.0 (?<response>\\d{3}.*)",Pattern.MULTILINE);
             Pattern callIDPattern = Pattern.compile("(?<!-.{8})(?<=Call-ID:)\\s*(?<callid>\\S*)",Pattern.MULTILINE);
@@ -969,9 +950,9 @@ public class SIPflow {
 	private String uasSdpCodec;
 	private String lastCseq;
 
-        SipCallDisplay(){
-            startTime=new Date(Long.MIN_VALUE);
-            endTime=new Date(Long.MAX_VALUE);
+        SipCallDisplay(Date min,Date max){
+            startTime = min;
+            endTime = max;
             callId = "";
             method= "";
             toAorUser= "";
@@ -992,12 +973,12 @@ public class SIPflow {
            
         }
         
-        public boolean IsAllNull() {
+        public boolean IsAllNull(Date min,Date max) {
             boolean out = false;
             if(
                 this.callId.isEmpty() &&
-                this.startTime.equals(new Date(Long.MIN_VALUE)) &&
-                this.endTime.equals(new Date(Long.MAX_VALUE)) && 
+                this.startTime.equals(min) &&
+                this.endTime.equals(max) && 
                 this.toAorUser.isEmpty() &&
                 this.toName.isEmpty() &&           
                 this.fromAorUser.isEmpty() &&
@@ -1178,9 +1159,6 @@ public class SIPflow {
         public void setSelected(boolean selected) {
             this.selected = selected;
         }
-        
-        
-        
     }
 
     private static class ReaderThread implements Runnable {
