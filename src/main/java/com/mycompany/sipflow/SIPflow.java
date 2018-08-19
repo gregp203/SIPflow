@@ -10,13 +10,17 @@ package com.mycompany.sipflow;
  * @author palmerg
  */
 
+
+import com.googlecode.lanterna.SGR;
 import com.googlecode.lanterna.TerminalSize;
+import com.googlecode.lanterna.TextColor;
 import com.googlecode.lanterna.gui2.BasicWindow;
 import com.googlecode.lanterna.gui2.Borders;
 import com.googlecode.lanterna.gui2.Button;
 import com.googlecode.lanterna.gui2.CheckBoxList;
 import com.googlecode.lanterna.gui2.Direction;
 import com.googlecode.lanterna.gui2.GridLayout;
+import com.googlecode.lanterna.gui2.Interactable;
 import com.googlecode.lanterna.gui2.LinearLayout;
 import com.googlecode.lanterna.gui2.Label;
 import com.googlecode.lanterna.gui2.MultiWindowTextGUI;
@@ -26,7 +30,10 @@ import com.googlecode.lanterna.gui2.TextBox;
 import com.googlecode.lanterna.gui2.TextGUIThread;
 import com.googlecode.lanterna.gui2.Window;
 import com.googlecode.lanterna.gui2.WindowBasedTextGUI;
+import com.googlecode.lanterna.gui2.dialogs.MessageDialogBuilder;
+import com.googlecode.lanterna.gui2.dialogs.MessageDialogButton;
 import com.googlecode.lanterna.gui2.table.Table;
+import com.googlecode.lanterna.input.KeyStroke;
 import com.googlecode.lanterna.screen.Screen;
 import com.googlecode.lanterna.screen.TerminalScreen;
 import com.googlecode.lanterna.terminal.DefaultTerminalFactory;
@@ -38,6 +45,7 @@ import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
 import java.io.Reader;
+import static java.lang.Thread.sleep;
 import java.text.DateFormat;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
@@ -51,7 +59,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class SIPflow {
-    
+    Screen screen;
     List<SipCall> sipCallList;
     List<String> selectedCallIds;
     private final Object sipCallListMonitor = new Object();
@@ -63,27 +71,31 @@ public class SIPflow {
     DateFormat tableStartDateFormat;
     DateFormat tableEndDateFormat;
     SimpleDateFormat logDateFormat; 
+    SimpleDateFormat FilterDateFormat;
     SipCallDisplay callFilter;
     List<String> methodFilter;
-    CheckBoxList<String> methodCheckBox;
     int newCalls;
     Date minDate;
     Date maxDate;
+    private final Object termResizedMonitor = new Object();
+    boolean termResized = false;
+    
     
     public SIPflow() {      
         sipCallList = new ArrayList<SipCall>();
         selectedCallIds = new ArrayList<String>();
-        tableStartDateFormat = new SimpleDateFormat("yyyy-MM-dd'@'HH:mm:ss.SSSZ");
+        tableStartDateFormat = new SimpleDateFormat("yyyy-MM-dd'@'HH:mm:ss.SSSXXX");
         tableEndDateFormat = new SimpleDateFormat("yyyy-MM-dd'@'HH:mm:ss");
         logDateFormat = new SimpleDateFormat("yyyy-MM-dd' 'HH:mm:ss.SSSXXX");
+        FilterDateFormat = new SimpleDateFormat("yyyy-MM-dd' 'HH:mm:ss.SSSXXX");        
         methodFilter = new ArrayList<String>();
-        //methodFilter.add("INVITE");
+        methodFilter.add("INVITE");
         new GuiThread(this);
         newCalls=0;
         numSipMsg=0;
         try {
-            minDate = logDateFormat.parse(logDateFormat.format(new Date(Long.MIN_VALUE)));
-            maxDate = logDateFormat.parse(logDateFormat.format(new Date(Long.MAX_VALUE)));
+            minDate = logDateFormat.parse("2000-01-01 00:00:00.000-05:00");
+            maxDate = logDateFormat.parse("3000-01-01 00:00:00.000-05:00");
         } catch (ParseException ex) {
             Logger.getLogger(SIPflow.class.getName()).log(Level.SEVERE, null, ex);
         }
@@ -98,21 +110,18 @@ public class SIPflow {
 	
     void Gui() throws InterruptedException, IOException{
 
+        
         try {
             Terminal term = new DefaultTerminalFactory().createTerminal();
-            Screen screen = new TerminalScreen(term);
+            screen = new TerminalScreen(term);
             WindowBasedTextGUI textGUI = new MultiWindowTextGUI(screen);
             screen.startScreen();
-            BasicWindow windowA = new BasicWindow();
-            windowA.setHints(Arrays.asList(Window.Hint.NO_DECORATIONS));
-          
+            BasicWindow mainWindow = new BasicWindow();
+            mainWindow.setHints(Arrays.asList(Window.Hint.NO_DECORATIONS));          
             Panel mainPanel = new Panel();
             Panel callsPanel = new Panel();
-            Panel buttonPanel = new Panel();
-            Panel methodPanel= new Panel();
-            Panel sortPanel= new Panel();
+            Panel buttonPanel = new Panel(); 
             Panel inputStatusPannel = new Panel();
-            
             inputStatusLabel = new Label("");
             callTable = new Table<String>(
                     "*",
@@ -129,196 +138,69 @@ public class SIPflow {
             TermResizeHandlerClass termResizeHandler = new TermResizeHandlerClass();
             term.addResizeListener(termResizeHandler);
             int numRows =term.getTerminalSize().getRows();
-            
-            callTable.setVisibleRows(numRows-19);
+            callTable.setVisibleRows(numRows-12);
             callTable.setSelectAction(()->  {
-                    if(callTable.getTableModel().getCell(0, callTable.getSelectedRow()).equals("[x]")){
-                        callTable.getTableModel().setCell(0, callTable.getSelectedRow(), "[ ]");
-                        selectedCallIds.remove(callTable.getTableModel().getCell(9, callTable.getSelectedRow()));
+                    if(callTable
+                            .getTableModel()
+                            .getCell(0, callTable.getSelectedRow())
+                            .equals("[x]")){
+                        callTable
+                                .getTableModel()
+                                .setCell(0, callTable.getSelectedRow(), "[ ]");
+                        selectedCallIds
+                                .remove(callTable
+                                        .getTableModel()
+                                        .getCell(9, callTable.getSelectedRow())
+                                );
                     }
                     else{
-                        callTable.getTableModel().setCell(0, callTable.getSelectedRow(), "[x]");
-                        selectedCallIds.add(callTable.getTableModel().getCell(9, callTable.getSelectedRow()));
+                        callTable
+                                .getTableModel()
+                                .setCell(0, callTable.getSelectedRow(), "[x]");
+                        selectedCallIds
+                                .add(callTable
+                                        .getTableModel()
+                                        .getCell(9, callTable.getSelectedRow())
+                                );
                     }
-		});
-            
-            TerminalSize methodCheckBoxsize = new TerminalSize(16, 5);
-            methodCheckBox= new CheckBoxList<String>(methodCheckBoxsize);
-            methodCheckBox.addItem("INVITE");
-            methodCheckBox.addItem("NOTIFY");
-            methodCheckBox.addItem("OPTIONS");
-            methodCheckBox.addItem("REGISTER");
-            methodCheckBox.addItem("SUBSCRIBE");
-            methodCheckBox.setChecked("INVITE", true);
-            methodFilter = methodCheckBox.getCheckedItems();
-            
-            Button methodApplylButton = new Button("Apply", ()-> {
-                    refreshCallTable();
-		});
-            TerminalSize sortRadioBoxSize = new TerminalSize(16, 4);
-            RadioBoxList<String> sortRadioBox = new RadioBoxList<String>(sortRadioBoxSize);
-            sortRadioBox.addItem("Start Time");
-            sortRadioBox.addItem("End Time");
-            sortRadioBox.addItem("From");
-            sortRadioBox.addItem("To");
-            sortRadioBox.setCheckedItem("Start Time");
-            Button sortApplylButton = new Button("Apply", ()-> {
-                    synchronized(sipCallListMonitor){
-                        switch (sortRadioBox.getCheckedItem()){
-                            
-                            case "Start Time" :
-                                sipCallList.sort((call1, call2) -> {
-                                        return call1.getStartTime().compareTo(call2.getStartTime());
-                                    });
-                                break;
-                            
-                            case "End Time" :
-                                sipCallList.sort((call1, call2) -> {
-                                        return call1.getEndTime().compareTo(call2.getEndTime());
-                                    });
-                                break;
-                                
-                            case "From" :
-                                sipCallList.sort((call1, call2) -> {
-                                        return call1.getFromAorUser().compareTo(call2.getFromAorUser());
-                                    });
-                                break;
-                                
-                            case "To" :
-                                sipCallList.sort((call1, call2) -> {
-                                        return call1.getToAorUser().compareTo(call2.getToAorUser());
-                                    });
-                                break;
-                        }        
-                    }
-                    refreshCallTable();
-		});
-                        
+		});    
             Button filterButton = new Button("Filter", ()-> {
-			BasicWindow filterWindow = new BasicWindow("Filter");
-                        TextBox startTimeTxtBox = new TextBox(new TerminalSize(30,1),logDateFormat.format(callFilter.getStartTime()));
-                        TextBox endTimeTxtBox = new TextBox(new TerminalSize(30,1),logDateFormat.format(callFilter.getEndTime()));
-                        TextBox fromUserAorTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getFromAorUser());
-                        TextBox fromUserNameTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getFromName());
-                        TextBox toUserAorTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getToAorUser());
-                        TextBox toUserNameTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getToName());
-                        TextBox uacIpTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getUacIp());
-                        TextBox uacPortTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getUacPort());
-                        TextBox uacSdpIpTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getUacSdpIp());
-                        TextBox uacSdpPortTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getUacSdpPort());
-                        TextBox uasIpTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getUasIp());
-                        TextBox uasPortTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getUasPort());
-                        TextBox uasSdpIpTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getUasSdpIp());
-                        TextBox uasSdpPortTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getUasSdpPort());
-                        TextBox callIdTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getCallId());                   
-                        TextBox lastCseqTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getLastCseq());
-                        Button filterApplyButton = new Button("Apply", ()-> {
-                            try {
-                                if (!startTimeTxtBox.getText().isEmpty() && 
-                                    !logDateFormat.parse(startTimeTxtBox.getText()).equals(minDate) ) {
-                                        callFilter.setStartTime(logDateFormat.parse(startTimeTxtBox.getText()));
-                                }
-                                                                
-                                if (!endTimeTxtBox.getText().isEmpty()  && 
-                                    !logDateFormat.parse(endTimeTxtBox.getText()).equals(maxDate) ) {
-                                        callFilter.setEndTime(logDateFormat.parse(endTimeTxtBox.getText()));
-                                }
-                                callFilter.setFromAorUser(fromUserAorTxtBox.getText());
-                                callFilter.setFromName(fromUserNameTxtBox.getText());
-                                callFilter.setToAorUser(toUserAorTxtBox.getText());
-                                callFilter.setToName(toUserNameTxtBox.getText());
-                                callFilter.setUacIp(uacIpTxtBox.getText());                                
-                                callFilter.setUacPort(uacPortTxtBox.getText());
-                                callFilter.setUacSdpIp(uacSdpIpTxtBox.getText());
-                                callFilter.setUacSdpPort(uacSdpPortTxtBox.getText());
-                                callFilter.setUasIp(uasIpTxtBox.getText());
-                                callFilter.setUasPort(uasPortTxtBox.getText());
-                                callFilter.setUasSdpIp(uasSdpIpTxtBox.getText());
-                                callFilter.setUasSdpPort(uasSdpPortTxtBox.getText());
-                                callFilter.setCallId(callIdTxtBox.getText());
-                                callFilter.setLastCseq(lastCseqTxtBox.getText());
-                                refreshCallTable();
-                                filterWindow.close();
-                            } catch (ParseException ex) {
-                                Logger.getLogger(SIPflow.class.getName()).log(Level.SEVERE, null, ex);
-                            }
-                        }); 
-                        Button filterCancelButton = new Button("Cancel", ()-> {
-                            filterWindow.close();
-                        });
-                        Panel filterPanel = new Panel();
-                        filterPanel.setLayoutManager(new GridLayout(2));
-                        filterPanel.addComponent(new Label("Start Time : "));
-                        filterPanel.addComponent(startTimeTxtBox);
-                        filterPanel.addComponent(new Label("Last Msg Time : "));
-                        filterPanel.addComponent(endTimeTxtBox);
-                        filterPanel.addComponent(new Label("From: User Aor : "));
-                        filterPanel.addComponent(fromUserAorTxtBox);
-                        filterPanel.addComponent(new Label("From: Name : "));
-                        filterPanel.addComponent(fromUserNameTxtBox);
-                        filterPanel.addComponent(new Label("To: User Aor : "));
-                        filterPanel.addComponent(toUserAorTxtBox);
-                        filterPanel.addComponent(new Label("To: Name : "));
-                        filterPanel.addComponent(toUserNameTxtBox);
-                        filterPanel.addComponent(new Label("UAC IP : "));
-                        filterPanel.addComponent(uacIpTxtBox);
-                        filterPanel.addComponent(new Label("UAC Port : "));
-                        filterPanel.addComponent(uacPortTxtBox);
-                        filterPanel.addComponent(new Label("UAC SDP IP : "));
-                        filterPanel.addComponent(uacSdpIpTxtBox);
-                        filterPanel.addComponent(new Label("UAC SDP Port : "));
-                        filterPanel.addComponent(uacSdpPortTxtBox);
-                        filterPanel.addComponent(new Label("UAS IP : "));
-                        filterPanel.addComponent(uasIpTxtBox);
-                        filterPanel.addComponent(new Label("UAS Port : "));
-                        filterPanel.addComponent(uasPortTxtBox);
-                        filterPanel.addComponent(new Label("UAS SDP IP : "));
-                        filterPanel.addComponent(uasSdpIpTxtBox);
-                        filterPanel.addComponent(new Label("UAS SDP Port : "));
-                        filterPanel.addComponent(uasSdpPortTxtBox);
-                        filterPanel.addComponent(new Label("Call-ID : "));
-                        filterPanel.addComponent(callIdTxtBox);
-                        filterPanel.addComponent(new Label("Last CSeq : "));
-                        filterPanel.addComponent(lastCseqTxtBox);
-                        filterPanel.addComponent(filterApplyButton);
-                        filterPanel.addComponent(filterCancelButton);
-                        filterWindow.setComponent(filterPanel);
-                        textGUI.addWindow(filterWindow);
-                        waitForTextGUI(filterWindow);
+                        CallFilterDialog(textGUI);			
             });
-            
             Button flowButton = new Button("Flow", ()-> {
-			// Actions go here
+                try {
+                    FlowDiagram(screen);
+                } catch (IOException ex) {
+                    Logger.getLogger(SIPflow.class.getName()).log(Level.SEVERE, null, ex);
+                } catch (InterruptedException ex) {
+                    Logger.getLogger(SIPflow.class.getName()).log(Level.SEVERE, null, ex);
+                }
             });
-            
-            mainPanel.setLayoutManager(new LinearLayout(Direction.VERTICAL));
-            
-            methodPanel.setLayoutManager(new LinearLayout(Direction.VERTICAL));
-            methodPanel.addComponent(methodCheckBox);
-            methodPanel.addComponent(methodApplylButton);
-            
-            sortPanel.setLayoutManager(new LinearLayout(Direction.VERTICAL));
-            sortPanel.addComponent(sortRadioBox);
-            sortPanel.addComponent(sortApplylButton);
-                        
+            Button methodButton = new Button("Method", ()-> {
+			 CallMethodFilterDiaog(textGUI);
+            });
+            Button sortButton = new Button("Sort", ()-> {
+			 CallSortDialog(textGUI);
+            });
+            Button refreshButton = new Button("Refresh", ()-> {
+			 refreshCallTable();
+            });
+            mainPanel.setLayoutManager(new LinearLayout(Direction.VERTICAL));            
             buttonPanel.setLayoutManager(new LinearLayout(Direction.HORIZONTAL));
-            buttonPanel.addComponent(methodPanel.withBorder(Borders.singleLine("Methods")));
-            buttonPanel.addComponent(sortPanel.withBorder(Borders.singleLine("Sort")));
+            //buttonPanel.addComponent(methodPanel.withBorder(Borders.singleLine("Methods")));
+            buttonPanel.addComponent(refreshButton);
+            buttonPanel.addComponent(methodButton);
+            buttonPanel.addComponent(sortButton);
             buttonPanel.addComponent(filterButton);            
             buttonPanel.addComponent(flowButton);
-                        
-            inputStatusPannel.addComponent(inputStatusLabel);           
-            
+            inputStatusPannel.addComponent(inputStatusLabel);
             callsPanel.addComponent(callTable);
-            
             mainPanel.addComponent(buttonPanel.withBorder(Borders.singleLine("Buttons")));
             mainPanel.addComponent(inputStatusPannel.withBorder(Borders.singleLine("Input")));
-            mainPanel.addComponent(callsPanel.withBorder(Borders.singleLine("Calls")));                    
-            
-            windowA.setComponent(mainPanel);            
-            
-            textGUI.addWindow(windowA);
-            waitForTextGUI(windowA);
+            mainPanel.addComponent(callsPanel.withBorder(Borders.singleLine("Calls"))); 
+            mainWindow.setComponent(mainPanel); 
+            textGUI.addWindow(mainWindow);
+            waitForTextGUI(mainWindow);
             
         } catch (IOException ex) {
             Logger.getLogger(SIPflow.class.getName()).log(Level.SEVERE, null, ex);
@@ -328,7 +210,8 @@ public class SIPflow {
     private class TermResizeHandlerClass implements TerminalResizeListener{
         @Override
         public void onResized(Terminal terminal, TerminalSize newSize){
-            callTable.setVisibleRows(newSize.getRows()-19);
+            callTable.setVisibleRows(newSize.getRows()-12);
+            synchronized(termResizedMonitor) {termResized = true;}
         }
     }
     
@@ -357,6 +240,7 @@ public class SIPflow {
                             addToCallTable(sipCallList.get(i),callFilter);
                         }
                     }
+                    
                     updateInputStauts();
                 }
                 catch(InterruptedException ignore) {}
@@ -369,19 +253,18 @@ public class SIPflow {
         int numberOfCallIds;
         synchronized(numSipMsgMonitor) {numberOfMsg = numSipMsg;}
         synchronized(sipCallListMonitor){numberOfCallIds = sipCallList.size();}
-        inputStatusLabel.setText("Number of SIP messages found : "+ numberOfMsg +" Number of CallIDs found : "+ numberOfCallIds);
+        inputStatusLabel
+                .setText("Number of SIP messages found : "+ numberOfMsg +" Number of CallIDs found : "+ numberOfCallIds);
     }
     
     void refreshCallTable(){
-        selectedCallIds.clear();
-        methodFilter.clear();
+        selectedCallIds.clear();        
         synchronized(callTableMonitor){
             int tableLength = callTable.getTableModel().getRowCount();
             for (int i =tableLength; i>0; i--) {
                 callTable.getTableModel().removeRow(0);
             } 
         }
-        methodFilter = methodCheckBox.getCheckedItems();
         synchronized(sipCallListMonitor){
             for(int i= 0; i<sipCallList.size();i++){
                 addToCallTable(sipCallList.get(i),callFilter);
@@ -430,7 +313,463 @@ public class SIPflow {
                 }
             }
     }
+    
+    void CallMethodFilterDiaog(WindowBasedTextGUI inputTextGUI){
+        BasicWindow methodWindow = new BasicWindow();
+        Panel methodPanel= new Panel();
+        TerminalSize methodCheckBoxsize = new TerminalSize(16, 5);
+        CheckBoxList<String> methodCheckBox= new CheckBoxList<String>(methodCheckBoxsize);
+        methodCheckBox.addItem("INVITE");
+        methodCheckBox.addItem("NOTIFY");
+        methodCheckBox.addItem("OPTIONS");
+        methodCheckBox.addItem("REGISTER");
+        methodCheckBox.addItem("SUBSCRIBE");
+        methodCheckBox.setChecked("INVITE", methodFilter.contains("INVITE"));
+        methodCheckBox.setChecked("NOTIFY", methodFilter.contains("NOTIFY"));
+        methodCheckBox.setChecked("OPTIONS", methodFilter.contains("OPTIONS"));
+        methodCheckBox.setChecked("REGISTER", methodFilter.contains("REGISTER"));
+        methodCheckBox.setChecked("SUBSCRIBE", methodFilter.contains("SUBSCRIBE"));
+        Button methodApplylButton = new Button("Apply", ()-> {
+                    methodFilter.clear();
+                    methodFilter = methodCheckBox.getCheckedItems();    
+                    refreshCallTable();
+                    methodWindow.close();
+            });
+        Button methodCancelButton = new Button("Cancel", ()-> {
+                methodWindow.close();
+        });
+        methodPanel.addComponent(methodCheckBox);
+        methodPanel.addComponent(methodApplylButton);
+        methodPanel.addComponent(methodCancelButton);
+        methodWindow.setComponent(methodPanel.withBorder(Borders.singleLine("Method")));
+        inputTextGUI.addWindow(methodWindow);
+        waitForTextGUI(methodWindow);
+    }
+    
+    void CallSortDialog(WindowBasedTextGUI inputTextGUI){
+        BasicWindow sortWindow = new BasicWindow();
+        Panel sortPanel= new Panel();
+        TerminalSize sortRadioBoxSize = new TerminalSize(16, 4);
+            RadioBoxList<String> sortRadioBox = new RadioBoxList<String>(sortRadioBoxSize);
+            sortRadioBox.addItem("Start Time");
+            sortRadioBox.addItem("End Time");
+            sortRadioBox.addItem("From");
+            sortRadioBox.addItem("To");
+            sortRadioBox.setCheckedItem("Start Time");
+            Button sortApplylButton = new Button("Apply", ()-> {
+                    synchronized(sipCallListMonitor){
+                        switch (sortRadioBox.getCheckedItem()){
+                            
+                            case "Start Time" :
+                                sipCallList.sort((call1, call2) -> {
+                                        return call1.getStartTime().compareTo(call2.getStartTime());
+                                    });
+                                break;
+                            
+                            case "End Time" :
+                                sipCallList.sort((call1, call2) -> {
+                                        return call1.getEndTime().compareTo(call2.getEndTime());
+                                    });
+                                break;
+                                
+                            case "From" :
+                                sipCallList.sort((call1, call2) -> {
+                                        return call1.getFromAorUser().compareTo(call2.getFromAorUser());
+                                    });
+                                break;
+                                
+                            case "To" :
+                                sipCallList.sort((call1, call2) -> {
+                                        return call1.getToAorUser().compareTo(call2.getToAorUser());
+                                    });
+                                break;
+                        }        
+                    }
+                    refreshCallTable();
+                    sortWindow.close();
+            });
+            Button sortCancelButton = new Button("Cancel", ()-> {
+                    sortWindow.close();
+            });
+            sortPanel.setLayoutManager(new LinearLayout(Direction.VERTICAL));
+            sortPanel.addComponent(sortRadioBox);
+            sortPanel.addComponent(sortApplylButton);
+            sortPanel.addComponent(sortCancelButton);
+            sortWindow.setComponent(sortPanel.withBorder(Borders.singleLine("Sort")));
+            inputTextGUI.addWindow(sortWindow);
+            waitForTextGUI(sortWindow);
+    }
 
+    void CallFilterDialog(WindowBasedTextGUI inputTextGUI){
+        BasicWindow filterWindow = new BasicWindow("Filter");
+        TimeTxtBox startTimeTxtBox = new TimeTxtBox(new TerminalSize(30,1),inputTextGUI,FilterDateFormat.format(callFilter.getStartTime()));
+        TextBox endTimeTxtBox = new TextBox(new TerminalSize(30,1),FilterDateFormat.format(callFilter.getEndTime()));
+        TextBox fromUserAorTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getFromAorUser());
+        TextBox fromUserNameTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getFromName());
+        TextBox toUserAorTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getToAorUser());
+        TextBox toUserNameTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getToName());
+        TextBox uacIpTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getUacIp());
+        TextBox uacPortTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getUacPort());
+        TextBox uacSdpIpTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getUacSdpIp());
+        TextBox uacSdpPortTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getUacSdpPort());
+        TextBox uasIpTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getUasIp());
+        TextBox uasPortTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getUasPort());
+        TextBox uasSdpIpTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getUasSdpIp());
+        TextBox uasSdpPortTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getUasSdpPort());
+        TextBox callIdTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getCallId());                   
+        TextBox lastCseqTxtBox = new TextBox(new TerminalSize(30,1), callFilter.getLastCseq());
+        Button filterApplyButton;
+        filterApplyButton = new Button("Apply", ()-> {
+            try {
+                if (!startTimeTxtBox.getText().isEmpty() &&
+                        !logDateFormat.parse(startTimeTxtBox.getText()).equals(minDate) ) {
+                    callFilter.setStartTime(logDateFormat.parse(startTimeTxtBox.getText()));
+                }
+                
+                if (!endTimeTxtBox.getText().isEmpty()  &&
+                        !logDateFormat.parse(endTimeTxtBox.getText()).equals(maxDate) ) {
+                    callFilter.setEndTime(logDateFormat.parse(endTimeTxtBox.getText()));
+                }
+                callFilter.setFromAorUser(fromUserAorTxtBox.getText());
+                callFilter.setFromName(fromUserNameTxtBox.getText());
+                callFilter.setToAorUser(toUserAorTxtBox.getText());
+                callFilter.setToName(toUserNameTxtBox.getText());
+                callFilter.setUacIp(uacIpTxtBox.getText());                                
+                callFilter.setUacPort(uacPortTxtBox.getText());
+                callFilter.setUacSdpIp(uacSdpIpTxtBox.getText());
+                callFilter.setUacSdpPort(uacSdpPortTxtBox.getText());
+                callFilter.setUasIp(uasIpTxtBox.getText());
+                callFilter.setUasPort(uasPortTxtBox.getText());
+                callFilter.setUasSdpIp(uasSdpIpTxtBox.getText());
+                callFilter.setUasSdpPort(uasSdpPortTxtBox.getText());
+                callFilter.setCallId(callIdTxtBox.getText());
+                callFilter.setLastCseq(lastCseqTxtBox.getText());
+                refreshCallTable();
+                filterWindow.close();
+            } catch (ParseException ex) {
+                Logger.getLogger(SIPflow.class.getName()).log(Level.SEVERE, null, ex);
+            }
+        }); 
+        Button filterCancelButton = new Button("Cancel", ()-> {
+            filterWindow.close();
+        });
+        Panel filterPanel = new Panel();
+        filterPanel.setLayoutManager(new GridLayout(2));
+        filterPanel.addComponent(new Label("Start Time : "));
+        filterPanel.addComponent(startTimeTxtBox);
+        filterPanel.addComponent(new Label("Last Msg Time : "));
+        filterPanel.addComponent(endTimeTxtBox);
+        filterPanel.addComponent(new Label("From: User Aor : "));
+        filterPanel.addComponent(fromUserAorTxtBox);
+        filterPanel.addComponent(new Label("From: Name : "));
+        filterPanel.addComponent(fromUserNameTxtBox);
+        filterPanel.addComponent(new Label("To: User Aor : "));
+        filterPanel.addComponent(toUserAorTxtBox);
+        filterPanel.addComponent(new Label("To: Name : "));
+        filterPanel.addComponent(toUserNameTxtBox);
+        filterPanel.addComponent(new Label("UAC IP : "));
+        filterPanel.addComponent(uacIpTxtBox);
+        filterPanel.addComponent(new Label("UAC Port : "));
+        filterPanel.addComponent(uacPortTxtBox);
+        filterPanel.addComponent(new Label("UAC SDP IP : "));
+        filterPanel.addComponent(uacSdpIpTxtBox);
+        filterPanel.addComponent(new Label("UAC SDP Port : "));
+        filterPanel.addComponent(uacSdpPortTxtBox);
+        filterPanel.addComponent(new Label("UAS IP : "));
+        filterPanel.addComponent(uasIpTxtBox);
+        filterPanel.addComponent(new Label("UAS Port : "));
+        filterPanel.addComponent(uasPortTxtBox);
+        filterPanel.addComponent(new Label("UAS SDP IP : "));
+        filterPanel.addComponent(uasSdpIpTxtBox);
+        filterPanel.addComponent(new Label("UAS SDP Port : "));
+        filterPanel.addComponent(uasSdpPortTxtBox);
+        filterPanel.addComponent(new Label("Call-ID : "));
+        filterPanel.addComponent(callIdTxtBox);
+        filterPanel.addComponent(new Label("Last CSeq : "));
+        filterPanel.addComponent(lastCseqTxtBox);
+        filterPanel.addComponent(filterApplyButton);
+        filterPanel.addComponent(filterCancelButton);
+        filterWindow.setComponent(filterPanel);
+        inputTextGUI.addWindow(filterWindow);
+        waitForTextGUI(filterWindow);
+    }
+    
+    private class TimeTxtBox extends TextBox {
+        WindowBasedTextGUI textGUI;
+        TimeTxtBox(TerminalSize preferredSize,WindowBasedTextGUI inputTextGUI, String initialContent){
+            super(preferredSize,initialContent);
+            textGUI = inputTextGUI;
+        }
+        
+        @Override
+        protected void afterLeaveFocus(FocusChangeDirection direction, Interactable previouslyInFocus){
+            if (!Pattern.compile("(\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}.\\d{3})((-|\\+)\\d{2}:\\d{2})").matcher(getText()).find()){
+            new MessageDialogBuilder()
+		.setTitle("Incorrect Date Format")
+		.setText("The date has to be in the format \nof yyyy-MM-dd HH:mm:ss.SSS+00:00")
+		.addButton(MessageDialogButton.Close)
+                .setExtraWindowHints(Arrays.asList(Window.Hint.CENTERED))
+		.build()
+		.showDialog(textGUI);
+            setText(FilterDateFormat.format(callFilter.getStartTime()));
+            }
+        }
+    }
+    
+    void FlowDiagram(Screen inputScreen) throws IOException, InterruptedException{
+        //list of colors
+        TextColor[] flowColor = { 
+        TextColor.ANSI.CYAN,
+        TextColor.ANSI.MAGENTA,
+        TextColor.ANSI.YELLOW,
+        TextColor.ANSI.GREEN,
+        TextColor.ANSI.RED
+        };
+        //assemble list of messages to diagram
+        List<SipMessage> diagramMessges = new ArrayList<SipMessage>();
+        int i=5;
+        synchronized(sipCallListMonitor){
+            for(SipCall call :sipCallList ){
+                TextColor color = flowColor[i % 5];
+                i++;
+                if(selectedCallIds.contains(call.getCallId())){
+                    for(SipMessage sipMsg :call.getSipMessages() ){
+                        if( !sipMsg.getSrcIp().equals( sipMsg.getDstIp() ) ){
+                            sipMsg.setColor(color);
+                            diagramMessges.add(sipMsg);
+                        }
+                    }
+                }
+            }
+        }
+        //sort the list of messages to diagram by time        
+        diagramMessges.sort((msg1, msg2) -> {
+                                        return msg1.getTimeDateStamp().compareTo(msg2.getTimeDateStamp());
+                                    });
+        //find all IPaddresses 
+        int segmentLenght = 20;  // can't be smaller than 13
+        List<String> ipList = new ArrayList<String>();
+        for(SipMessage msg : diagramMessges){
+            if(!ipList.contains(msg.getSrcIp())){
+                ipList.add(msg.getSrcIp());
+            } 
+            if(!ipList.contains(msg.getDstIp())){
+                ipList.add(msg.getDstIp());                
+            }
+        }
+        //draw the flow diagram
+        int verticalPosition = 0;
+        int horizonatalPosition = 0;
+        DrawFlow (inputScreen, diagramMessges, ipList,verticalPosition,horizonatalPosition, segmentLenght);
+        inputScreen.refresh();
+        //poll for keyboardinput
+        boolean done = false;
+        while(!done){
+            synchronized(termResizedMonitor){
+                if (termResized){
+                    inputScreen.doResizeIfNecessary();
+                    DrawFlow (inputScreen, diagramMessges, ipList ,verticalPosition,horizonatalPosition,segmentLenght);
+                    termResized = false;
+                }
+            }
+            KeyStroke keyStroke = screen.pollInput();
+            if(keyStroke !=null){
+                switch(keyStroke.getKeyType()){
+                    case ArrowDown : 
+                        if (verticalPosition<diagramMessges.size()-1) verticalPosition++;
+                        break;
+                    case ArrowUp :
+                        if (verticalPosition >0) verticalPosition--;
+                        break;
+                    case Escape:
+                    case EOF:
+                        done = true;
+                        break;
+                    case ArrowRight:
+                        if (horizonatalPosition < (19 + (ipList.size()*segmentLenght))-inputScreen.getTerminalSize().getColumns()) horizonatalPosition++;
+                        break;
+                    case ArrowLeft:
+                        if (horizonatalPosition>0) horizonatalPosition--;
+                        break;
+                }
+                DrawFlow (inputScreen, diagramMessges, ipList ,verticalPosition,horizonatalPosition ,segmentLenght);
+            }
+            sleep(12);
+        }
+    }
+
+    void DrawFlow (Screen inputScreen
+            , List<SipMessage> diagramMessges
+            , List<String> ipList, int verticalPosition
+            , int horizontalPosition
+            , int segmentLenght) 
+            throws IOException{
+        //create header string
+        String ipHeader="Time         ";
+        for(String ip:ipList){
+            ipHeader += ip + StringRepeat(" ",segmentLenght-ip.length());
+        }
+        inputScreen.clear(); 
+        inputScreen.setCursorPosition(null);
+        //ip addresses at top of screen 
+        inputScreen.newTextGraphics()
+                .putString(0, 0, ipHeader
+                        .substring(Math.min(
+                                horizontalPosition
+                                ,ipHeader.length()
+                        )
+                        )
+                );
+        inputScreen.newTextGraphics()
+                .putString(0, 1, 
+                        StringRepeat("-",19 + (ipList.size()*segmentLenght) )
+                                .substring(Math.min(horizontalPosition
+                                        ,19 + (ipList.size()*segmentLenght)
+                                )
+                                )
+                );
+        //loop trough diagramMessges and write them line at a time
+        int firstLine = Math.max(
+                Math.min(
+                    Math.max((verticalPosition-inputScreen.getTerminalSize().getRows()/2), 
+                        0),
+                    diagramMessges.size()-inputScreen.getTerminalSize().getRows()+2 ),
+                0);
+        int lastLine = Math.min(diagramMessges.size(),firstLine + inputScreen.getTerminalSize().getRows());
+        for (int i = firstLine;i < lastLine;i++){
+            //inputScreen.newTextGraphics().putString(0, i+2, MessageLine (diagramMessges.get(i),ipList,segmentLenght));
+            MessageLine (inputScreen, i-firstLine+2, horizontalPosition, diagramMessges.get(i),ipList,segmentLenght,false);
+        }
+        //reverse cursur position 
+        MessageLine (inputScreen
+                ,2+verticalPosition-firstLine
+                , horizontalPosition
+                ,diagramMessges.get(verticalPosition)
+                ,ipList,20,true);
+        inputScreen.refresh();
+    }
+    
+    static void MessageLine (Screen inputScreen
+            ,int verticalPosition
+            , int horizontalPosition
+            , SipMessage inputSipMsg
+            ,List<String> inputIpList
+            ,int inputsegmentLenght
+            ,boolean reverse) {
+        String leftString = "";        
+        //get ip addresses of the msg and thier index and direction from ipList
+        int lowIndex = Math.min( inputIpList.indexOf( inputSipMsg.getSrcIp() )
+                ,inputIpList.indexOf( inputSipMsg.getDstIp() ) );
+        int highIndex = Math.max( inputIpList.indexOf( inputSipMsg.getSrcIp() )
+                ,inputIpList.indexOf( inputSipMsg.getDstIp() ) );
+        boolean pointsRight = inputIpList.indexOf( inputSipMsg.getSrcIp() ) 
+                < inputIpList.indexOf( inputSipMsg.getDstIp() );
+        //add date to output        
+        leftString += new SimpleDateFormat("HH:mm:ss.SSSXXX")
+                .format(inputSipMsg.getTimeDateStamp())+"|";
+        //add left white space
+        leftString += StringRepeat(StringRepeat(" ",inputsegmentLenght-1) +"|",lowIndex-0);
+        //calculate string length per horizontal position
+        int hzpLeftString = Math.min(horizontalPosition,leftString.length());
+        //draw left string
+        if(reverse){
+            inputScreen
+                    .newTextGraphics()
+                    .putString(0,verticalPosition,leftString.substring(hzpLeftString),SGR.REVERSE);
+        }else{
+            inputScreen
+                    .newTextGraphics()
+                    .putString(0,verticalPosition,leftString.substring(hzpLeftString));
+        }
+        String middleString ="";
+        //add left arrow point or not   
+        middleString += pointsRight ? "-" : "<";
+        //determin part of sip msg to diplay
+        String displayedPartOfSipMsg = coalesceString(
+                inputSipMsg.getMethod(),
+                inputSipMsg.getResponse())
+                    .substring( 0,
+                            Math.min( 10, coalesceString( inputSipMsg.getMethod(),
+                                inputSipMsg.getResponse() ).length() ));
+        //draw left part of line
+        //determin lenght of left line:  the full length of line which is the 
+        //difference between the index number times the segment length - 1 for 
+        //the vert line on the end - 2 for the points - the displayed part of 
+        //the sip msg all in half and whatever 
+        //is leftover will be used for the right line
+        int leftLineLength = (((highIndex-lowIndex)*inputsegmentLenght)-1-2-displayedPartOfSipMsg.length())/2;
+        middleString += StringRepeat("-", leftLineLength);
+        //add the displayed part of the sip msg
+        middleString += displayedPartOfSipMsg;
+        //draw right part of line
+        //determin lenght of right line: 
+        ///the full length of line (highIndex-lowIndex*segmentLenght)
+        // - 1 for the vert line on the end - 2 for the points
+        // - displayedPartOfSipMsg.length() - leftLineLength
+        int rightLineLength = ((highIndex-lowIndex)*inputsegmentLenght)-1-2-displayedPartOfSipMsg.length()-leftLineLength ;
+        middleString += StringRepeat("-", rightLineLength);        
+        //add right arrow point or not
+        middleString += pointsRight ? ">" : "-";
+        //calculate length of middlestring per horizontalposision       
+        int hzpMidString = Math.min(horizontalPosition-hzpLeftString,middleString.length());
+        //draw middleString
+        if(reverse){
+            inputScreen.newTextGraphics().setForegroundColor(inputSipMsg.getColor())
+                    .putString(leftString.length()-hzpLeftString
+                            ,verticalPosition
+                            ,middleString
+                                    .substring(hzpMidString)
+                                , SGR.REVERSE 
+                    );
+        }else{
+            inputScreen.newTextGraphics().setForegroundColor(inputSipMsg.getColor())
+                    .putString(leftString.length()-hzpLeftString
+                            ,verticalPosition
+                            ,middleString
+                                    .substring(hzpMidString)
+                    );
+        }
+        //TODO revert color back to default 
+        String rightString = "";
+        //add vert line
+        rightString += "|"; 
+        //add right white space
+        rightString += StringRepeat(StringRepeat(" ",inputsegmentLenght-1) +"|",inputIpList.size()-1-highIndex);
+        //calculate length of middlestring per horizontalposision       
+        int hzpRightString = Math.min(horizontalPosition-hzpLeftString-hzpMidString,rightString.length());        
+        //draw rightString
+        if(reverse){
+            inputScreen.newTextGraphics()
+                    .putString((leftString.length()-hzpLeftString) + (middleString.length()-hzpMidString)
+                            ,verticalPosition
+                            ,rightString
+                                    .substring(hzpRightString)
+                            ,SGR.REVERSE
+                    );
+        }else{
+            inputScreen.newTextGraphics()
+                    .putString((leftString.length()-hzpLeftString) + (middleString.length()-hzpMidString)
+                            ,verticalPosition
+                            ,rightString
+                                    .substring(hzpRightString)
+                    );
+        }
+    }
+    
+    static String StringRepeat (String inputString,int inputNumberOfTimes){
+        String output = "";
+        for (int i = 0; i < inputNumberOfTimes; i++) {
+            output += inputString;
+        }
+        return output;
+    }
+    
+    static String coalesceString (String a, String b) {
+        
+        return a != null ? a : b;
+    }
+
+    
     void ReadInput(Reader inputReader) throws InterruptedException {
         //wait for GUI thread to be ready
         
@@ -478,14 +817,13 @@ public class SIPflow {
                     if(dstIpMatcher.find()){
                             outDstIp = dstIpMatcher.group("address");
                             outDstPort = dstIpMatcher.group("port");
-                    }	
-                
+                    }
                     //loop and read from data
                     while ((lineRead=inputBuffered.readLine()) != null) {
                         //match if begining of line next message 
                         beginMsgMatcher.reset(lineRead);
                         if (beginMsgMatcher.find()) {				
-                            //get the last SipMessage in SIPmesagesList and parse it to SipCalls  
+                            //create SipMessage and parse it to SipCalls to be added to a sipcall in the sipCallList  
                             ParseSipCalls(new SipMessage(outMessage,
                                             outTimeDateStamp,
                                             outSrcIp,
@@ -734,7 +1072,7 @@ public class SIPflow {
 	private String toAorUser;
 	private String fromName;
 	private String fromAorUser;
-	private String color;
+	private TextColor color;
 	private boolean hasSdp;
 	private String sdpIp;
 	private String sdpPort;
@@ -785,7 +1123,7 @@ public class SIPflow {
             if(reqMatcher.find()) {
                     method = reqMatcher.group("method");
                     response = reqMatcher.group("response");
-                    req = method+reqMatcher.group("uri")+response;			
+                    req = (method == null ? "" : method) + reqMatcher.group("uri") + (response == null ? "" : response) ;			
             }
             if(callIDMatcher.find()) {
                     callID = callIDMatcher.group("callid");
@@ -843,11 +1181,11 @@ public class SIPflow {
 		return dstPort;
 	}
 	
-	public String getColor() {
+	public TextColor getColor() {
 		return color;
 	}
 
-	public void setColor(String color) {
+	public void setColor(TextColor color) {
 		this.color = color;
 	}
 
