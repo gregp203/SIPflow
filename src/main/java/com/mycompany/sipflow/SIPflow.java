@@ -204,7 +204,7 @@ public class SIPflow {
 	void addSipMessage(SipMessage inputSipMessage){
             sipMessages.add(inputSipMessage);
             if ((startTime==null)||(inputSipMessage.getTimeDateStamp().compareTo(startTime) < 0)) startTime = inputSipMessage.getTimeDateStamp();
-            if (inputSipMessage.getTimeDateStamp().compareTo(startTime) > 0) endTime = inputSipMessage.getTimeDateStamp();
+            if (endTime ==null||(inputSipMessage.getTimeDateStamp().compareTo(endTime) > 0) ) endTime = inputSipMessage.getTimeDateStamp();
             if (toAorUser=="") toAorUser = inputSipMessage.getToAorUser();
             if (toName=="") toName = inputSipMessage.getToName();
             if (fromAorUser=="") fromAorUser = inputSipMessage.getFromAorUser();
