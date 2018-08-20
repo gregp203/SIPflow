@@ -59,14 +59,12 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class SIPflow {
-    Screen screen;
+    
     List<SipCall> sipCallList;
-    List<String> selectedCallIds;
     private final Object sipCallListMonitor = new Object();
     int numSipMsg;
     private final Object numSipMsgMonitor = new Object();
-    Table<String> callTable;
-    Label inputStatusLabel;    
+    ;    
     private final Object callTableMonitor = new Object();
     DateFormat tableStartDateFormat;
     DateFormat tableEndDateFormat;
@@ -79,13 +77,13 @@ public class SIPflow {
     Date maxDate;
     private final Object termResizedMonitor = new Object();
     boolean termResized = false;
+    TerminalSize newTermSize;
     
-    
+    @SuppressWarnings({"Convert2Diamond", "ResultOfObjectAllocationIgnored"})
     public SIPflow() {      
         sipCallList = new ArrayList<SipCall>();
-        selectedCallIds = new ArrayList<String>();
         tableStartDateFormat = new SimpleDateFormat("yyyy-MM-dd'@'HH:mm:ss.SSSXXX");
-        tableEndDateFormat = new SimpleDateFormat("yyyy-MM-dd'@'HH:mm:ss");
+        tableEndDateFormat = new SimpleDateFormat("HH:mm:ss");
         logDateFormat = new SimpleDateFormat("yyyy-MM-dd' 'HH:mm:ss.SSSXXX");
         FilterDateFormat = new SimpleDateFormat("yyyy-MM-dd' 'HH:mm:ss.SSSXXX");        
         methodFilter = new ArrayList<String>();
@@ -109,11 +107,11 @@ public class SIPflow {
     }
 	
     void Gui() throws InterruptedException, IOException{
-
+        List<String> selectedCallIds = new ArrayList<String>();
         
         try {
             Terminal term = new DefaultTerminalFactory().createTerminal();
-            screen = new TerminalScreen(term);
+            Screen screen = new TerminalScreen(term);
             WindowBasedTextGUI textGUI = new MultiWindowTextGUI(screen);
             screen.startScreen();
             BasicWindow mainWindow = new BasicWindow();
@@ -122,11 +120,11 @@ public class SIPflow {
             Panel callsPanel = new Panel();
             Panel buttonPanel = new Panel(); 
             Panel inputStatusPannel = new Panel();
-            inputStatusLabel = new Label("");
-            callTable = new Table<String>(
+            Label inputStatusLabel = new Label("");
+            Table<String> callTable = new Table<String>(
                     "*",
                     "Start Time", 
-                    "Time of Last Msg",
+                    "Last Msg",
                     "Method",
                     "From",
                     "To",
@@ -165,25 +163,25 @@ public class SIPflow {
                     }
 		});    
             Button filterButton = new Button("Filter", ()-> {
-                        CallFilterDialog(textGUI);			
+                        CallFilterDialog(textGUI,selectedCallIds,callTable);			
             });
             Button flowButton = new Button("Flow", ()-> {
                 try {
-                    FlowDiagram(screen);
-                } catch (IOException ex) {
-                    Logger.getLogger(SIPflow.class.getName()).log(Level.SEVERE, null, ex);
-                } catch (InterruptedException ex) {
+                    if (selectedCallIds.size()>0){
+                        FlowDiagram(screen,selectedCallIds);
+                    }
+                } catch (IOException | InterruptedException ex) {
                     Logger.getLogger(SIPflow.class.getName()).log(Level.SEVERE, null, ex);
                 }
             });
             Button methodButton = new Button("Method", ()-> {
-			 CallMethodFilterDiaog(textGUI);
+			 CallMethodFilterDiaog(textGUI,selectedCallIds, callTable);
             });
             Button sortButton = new Button("Sort", ()-> {
-			 CallSortDialog(textGUI);
+			 CallSortDialog(textGUI,selectedCallIds,callTable);
             });
             Button refreshButton = new Button("Refresh", ()-> {
-			 refreshCallTable();
+			 refreshCallTable(selectedCallIds,callTable);
             });
             mainPanel.setLayoutManager(new LinearLayout(Direction.VERTICAL));            
             buttonPanel.setLayoutManager(new LinearLayout(Direction.HORIZONTAL));
@@ -200,22 +198,16 @@ public class SIPflow {
             mainPanel.addComponent(callsPanel.withBorder(Borders.singleLine("Calls"))); 
             mainWindow.setComponent(mainPanel); 
             textGUI.addWindow(mainWindow);
-            waitForTextGUI(mainWindow);
+            waitForTextGUI(mainWindow,callTable,inputStatusLabel);
             
         } catch (IOException ex) {
             Logger.getLogger(SIPflow.class.getName()).log(Level.SEVERE, null, ex);
         }
     }
     
-    private class TermResizeHandlerClass implements TerminalResizeListener{
-        @Override
-        public void onResized(Terminal terminal, TerminalSize newSize){
-            callTable.setVisibleRows(newSize.getRows()-12);
-            synchronized(termResizedMonitor) {termResized = true;}
-        }
-    }
     
-    void waitForTextGUI(BasicWindow window) {
+    
+    void waitForTextGUI(BasicWindow window,Table<String> callTable,Label inputStatusLabel) {
         while(window.getTextGUI() != null) {
             boolean sleep = true;
             TextGUIThread guiThread = window.getTextGUI().getGUIThread();
@@ -237,18 +229,22 @@ public class SIPflow {
                     synchronized(callTableMonitor){
                         for(;newCalls >0;newCalls--){
                             int i = sipCallList.size() - newCalls;
-                            addToCallTable(sipCallList.get(i),callFilter);
+                            addToCallTable(sipCallList.get(i),callFilter,callTable);
                         }
                     }
-                    
-                    updateInputStauts();
+                    synchronized(termResizedMonitor){
+                        if(termResized){
+                            callTable.setVisibleRows(newTermSize.getRows()-12);
+                        }
+                    }
+                    updateInputStauts(inputStatusLabel);
                 }
                 catch(InterruptedException ignore) {}
             }
         }
     }
     
-    void updateInputStauts(){        
+    void updateInputStauts(Label inputStatusLabel){        
         int numberOfMsg;
         int numberOfCallIds;
         synchronized(numSipMsgMonitor) {numberOfMsg = numSipMsg;}
@@ -257,7 +253,7 @@ public class SIPflow {
                 .setText("Number of SIP messages found : "+ numberOfMsg +" Number of CallIDs found : "+ numberOfCallIds);
     }
     
-    void refreshCallTable(){
+    void refreshCallTable(List<String> selectedCallIds,Table<String> callTable){
         selectedCallIds.clear();        
         synchronized(callTableMonitor){
             int tableLength = callTable.getTableModel().getRowCount();
@@ -267,12 +263,12 @@ public class SIPflow {
         }
         synchronized(sipCallListMonitor){
             for(int i= 0; i<sipCallList.size();i++){
-                addToCallTable(sipCallList.get(i),callFilter);
+                addToCallTable(sipCallList.get(i),callFilter,callTable);
             }
         }
     }
     
-    private void addToCallTable(SipCall inputCall,SipCallDisplay filter){
+    private void addToCallTable(SipCall inputCall,SipCallDisplay filter,Table<String> callTable){
             boolean callMatches = false;
             if(methodFilter.contains(inputCall.getMethod())){
                 if(filter.IsAllNull(minDate,maxDate)) callMatches = true;
@@ -314,7 +310,7 @@ public class SIPflow {
             }
     }
     
-    void CallMethodFilterDiaog(WindowBasedTextGUI inputTextGUI){
+    void CallMethodFilterDiaog(WindowBasedTextGUI inputTextGUI,List<String> selectedCallIds,Table<String> callTable){
         BasicWindow methodWindow = new BasicWindow();
         Panel methodPanel= new Panel();
         TerminalSize methodCheckBoxsize = new TerminalSize(16, 5);
@@ -332,7 +328,7 @@ public class SIPflow {
         Button methodApplylButton = new Button("Apply", ()-> {
                     methodFilter.clear();
                     methodFilter = methodCheckBox.getCheckedItems();    
-                    refreshCallTable();
+                    refreshCallTable(selectedCallIds,callTable);
                     methodWindow.close();
             });
         Button methodCancelButton = new Button("Cancel", ()-> {
@@ -342,11 +338,10 @@ public class SIPflow {
         methodPanel.addComponent(methodApplylButton);
         methodPanel.addComponent(methodCancelButton);
         methodWindow.setComponent(methodPanel.withBorder(Borders.singleLine("Method")));
-        inputTextGUI.addWindow(methodWindow);
-        waitForTextGUI(methodWindow);
+        inputTextGUI.addWindow(methodWindow);        
     }
     
-    void CallSortDialog(WindowBasedTextGUI inputTextGUI){
+    void CallSortDialog(WindowBasedTextGUI inputTextGUI,List<String> selectedCallIds,Table<String> callTable){
         BasicWindow sortWindow = new BasicWindow();
         Panel sortPanel= new Panel();
         TerminalSize sortRadioBoxSize = new TerminalSize(16, 4);
@@ -385,7 +380,7 @@ public class SIPflow {
                                 break;
                         }        
                     }
-                    refreshCallTable();
+                    refreshCallTable(selectedCallIds,callTable);
                     sortWindow.close();
             });
             Button sortCancelButton = new Button("Cancel", ()-> {
@@ -396,11 +391,10 @@ public class SIPflow {
             sortPanel.addComponent(sortApplylButton);
             sortPanel.addComponent(sortCancelButton);
             sortWindow.setComponent(sortPanel.withBorder(Borders.singleLine("Sort")));
-            inputTextGUI.addWindow(sortWindow);
-            waitForTextGUI(sortWindow);
+            inputTextGUI.addWindow(sortWindow);            
     }
 
-    void CallFilterDialog(WindowBasedTextGUI inputTextGUI){
+    void CallFilterDialog(WindowBasedTextGUI inputTextGUI,List<String> selectedCallIds,Table<String> callTable){
         BasicWindow filterWindow = new BasicWindow("Filter");
         TimeTxtBox startTimeTxtBox = new TimeTxtBox(new TerminalSize(30,1),inputTextGUI,FilterDateFormat.format(callFilter.getStartTime()));
         TextBox endTimeTxtBox = new TextBox(new TerminalSize(30,1),FilterDateFormat.format(callFilter.getEndTime()));
@@ -444,7 +438,7 @@ public class SIPflow {
                 callFilter.setUasSdpPort(uasSdpPortTxtBox.getText());
                 callFilter.setCallId(callIdTxtBox.getText());
                 callFilter.setLastCseq(lastCseqTxtBox.getText());
-                refreshCallTable();
+                refreshCallTable(selectedCallIds, callTable);
                 filterWindow.close();
             } catch (ParseException ex) {
                 Logger.getLogger(SIPflow.class.getName()).log(Level.SEVERE, null, ex);
@@ -490,8 +484,17 @@ public class SIPflow {
         filterPanel.addComponent(filterApplyButton);
         filterPanel.addComponent(filterCancelButton);
         filterWindow.setComponent(filterPanel);
-        inputTextGUI.addWindow(filterWindow);
-        waitForTextGUI(filterWindow);
+        inputTextGUI.addWindow(filterWindow);       
+    }
+    
+    private class TermResizeHandlerClass implements TerminalResizeListener{
+        @Override
+        public void onResized(Terminal terminal, TerminalSize newSize){
+            synchronized(termResizedMonitor) {
+                termResized = true;
+                newTermSize = newSize;
+            }
+        }
     }
     
     private class TimeTxtBox extends TextBox {
@@ -516,7 +519,7 @@ public class SIPflow {
         }
     }
     
-    void FlowDiagram(Screen inputScreen) throws IOException, InterruptedException{
+    void FlowDiagram(Screen screen,List<String> selectedCallIds) throws IOException, InterruptedException{
         //list of colors
         TextColor[] flowColor = { 
         TextColor.ANSI.CYAN,
@@ -533,7 +536,7 @@ public class SIPflow {
                 TextColor color = flowColor[i % 5];
                 i++;
                 if(selectedCallIds.contains(call.getCallId())){
-                    for(SipMessage sipMsg :call.getSipMessages() ){
+                    for (SipMessage sipMsg : call.getSipMessages()) {
                         if( !sipMsg.getSrcIp().equals( sipMsg.getDstIp() ) ){
                             sipMsg.setColor(color);
                             diagramMessges.add(sipMsg);
@@ -560,15 +563,15 @@ public class SIPflow {
         //draw the flow diagram
         int verticalPosition = 0;
         int horizonatalPosition = 0;
-        DrawFlow (inputScreen, diagramMessges, ipList,verticalPosition,horizonatalPosition, segmentLenght);
-        inputScreen.refresh();
+        DrawFlow (screen, diagramMessges, ipList,verticalPosition,horizonatalPosition, segmentLenght);
+        screen.refresh();
         //poll for keyboardinput
         boolean done = false;
         while(!done){
             synchronized(termResizedMonitor){
                 if (termResized){
-                    inputScreen.doResizeIfNecessary();
-                    DrawFlow (inputScreen, diagramMessges, ipList ,verticalPosition,horizonatalPosition,segmentLenght);
+                    screen.doResizeIfNecessary();
+                    DrawFlow (screen, diagramMessges, ipList ,verticalPosition,horizonatalPosition,segmentLenght);
                     termResized = false;
                 }
             }
@@ -586,18 +589,77 @@ public class SIPflow {
                         done = true;
                         break;
                     case ArrowRight:
-                        if (horizonatalPosition < (19 + (ipList.size()*segmentLenght))-inputScreen.getTerminalSize().getColumns()) horizonatalPosition++;
+                        if (horizonatalPosition < (19 + (ipList.size()*segmentLenght))-screen.getTerminalSize().getColumns()) horizonatalPosition++;
                         break;
                     case ArrowLeft:
                         if (horizonatalPosition>0) horizonatalPosition--;
                         break;
+                    case Enter:
+                        SipMessage(screen,diagramMessges,verticalPosition);
+                        break;
                 }
-                DrawFlow (inputScreen, diagramMessges, ipList ,verticalPosition,horizonatalPosition ,segmentLenght);
+                DrawFlow (screen, diagramMessges, ipList ,verticalPosition,horizonatalPosition ,segmentLenght);
             }
             sleep(12);
         }
     }
-
+    
+    void SipMessage(Screen screen,List<SipMessage> diagramMessges,int verticalPosition) throws IOException, InterruptedException{
+        String[] msg = diagramMessges.get(verticalPosition).getMessage().split("\n");
+         
+        screen.setCursorPosition(null);
+        for (int i = 0; i < msg.length ;i++){
+            screen.newTextGraphics().putString(0, i, msg[i]);
+        }
+        boolean doneMsg = false;
+        int msgVertPos = 0;
+        int msgHorzPos =0;
+        DrawSipMessage(screen,msg, msgVertPos,msgHorzPos); 
+        while(!doneMsg){
+            synchronized(termResizedMonitor){
+                if (termResized){
+                    screen.doResizeIfNecessary();
+                    DrawSipMessage(screen,msg, msgVertPos,msgHorzPos);
+                    termResized = false;
+                }
+            }
+            KeyStroke keyStroke = screen.pollInput();
+            if(keyStroke !=null){
+                switch(keyStroke.getKeyType()){
+                    case ArrowDown : 
+                        if (msgVertPos < msg.length-1) msgVertPos++;
+                        break;
+                    case ArrowUp :
+                        if (msgVertPos >0) msgVertPos--;
+                        break;
+                    case Escape:
+                    case EOF:
+                        doneMsg = true;
+                        break;
+                    case ArrowRight:
+                        msgHorzPos++;
+                        break;
+                    case ArrowLeft:
+                        if (msgHorzPos>0) msgHorzPos--;
+                        break;
+                }
+                DrawSipMessage(screen,msg, msgVertPos,msgHorzPos);
+            }
+            sleep(12);
+        }
+        
+    }
+    
+    void DrawSipMessage(Screen screen,String[] msg,int msgVertPos,int msgHorzPos) throws IOException{
+        int row =0;
+        screen.clear();
+        for (int i = msgVertPos; i < msg.length ;i++){
+            screen.newTextGraphics().putString(0, row, msg[i].substring(Math.min(msg[i].length(),msgHorzPos)));
+            row++;
+        }
+        screen.refresh();
+    }
+    
     void DrawFlow (Screen inputScreen
             , List<SipMessage> diagramMessges
             , List<String> ipList, int verticalPosition
@@ -691,6 +753,9 @@ public class SIPflow {
                     .substring( 0,
                             Math.min( 10, coalesceString( inputSipMsg.getMethod(),
                                 inputSipMsg.getResponse() ).length() ));
+        if(inputSipMsg.hasSdp()){
+            displayedPartOfSipMsg+="-SDP";
+        }
         //draw left part of line
         //determin lenght of left line:  the full length of line which is the 
         //difference between the index number times the segment length - 1 for 
@@ -849,8 +914,8 @@ public class SIPflow {
                 }
             }
         } catch (IOException | ParseException e) {
-                // TODO Auto-generated catch block
-                e.printStackTrace();
+            // TODO Auto-generated catch block
+
         }
     }
         
@@ -877,9 +942,9 @@ public class SIPflow {
         }
     }
         
-    private static class SipCall {
+    private static final class SipCall {
         
-        private String callId;
+        private final String callId;
 	private Date startTime;
 	private Date endTime;
 	private String toAorUser;
@@ -927,11 +992,11 @@ public class SIPflow {
             sipMessages.add(inputSipMessage);
             if ((startTime==null)||(inputSipMessage.getTimeDateStamp().compareTo(startTime) < 0)) startTime = inputSipMessage.getTimeDateStamp();
             if (inputSipMessage.getTimeDateStamp().compareTo(startTime) > 0) endTime = inputSipMessage.getTimeDateStamp();
-            if (toAorUser == "") toAorUser = inputSipMessage.getToAorUser();
-            if (toName == "") toName = inputSipMessage.getToName();
-            if (fromAorUser == "") fromAorUser = inputSipMessage.getFromAorUser();
-            if (fromName == "") fromName = inputSipMessage.getFromName();
-            if (uacIp == "") {
+            if (toAorUser.isEmpty()) toAorUser = inputSipMessage.getToAorUser();
+            if (toName.isEmpty()) toName = inputSipMessage.getToName();
+            if (fromAorUser.isEmpty()) fromAorUser = inputSipMessage.getFromAorUser();
+            if (fromName.isEmpty()) fromName = inputSipMessage.getFromName();
+            if (uacIp.isEmpty()) {
                     uacIp = inputSipMessage.getSrcIp();
                     uacPort = inputSipMessage.getSrcPort();
             }		
@@ -939,11 +1004,11 @@ public class SIPflow {
                     uasIp = inputSipMessage.getDstIp();
                     uasPort = inputSipMessage.getDstPort();
             }
-            if (method == "") method = inputSipMessage.getMethod();
+            if (method.isEmpty()) method = inputSipMessage.getMethod();
             if (
                     (inputSipMessage.hasSdp())&&
-                    (inputSipMessage.getSrcIp() == uacIp)&&
-                    (inputSipMessage.getSrcPort() == uacPort)
+                    (inputSipMessage.getSrcIp().isEmpty())&&
+                    (inputSipMessage.getSrcPort().isEmpty())
                     ) {
                             uacSdpIp = inputSipMessage.getSdpIp();
                             uacSdpPort = inputSipMessage.getSdpPort();
@@ -951,8 +1016,8 @@ public class SIPflow {
             }
             if (
                     (inputSipMessage.hasSdp())&&
-                    (inputSipMessage.getSrcIp() == uasIp)&&
-                    (inputSipMessage.getSrcPort() == uasPort)
+                    (inputSipMessage.getSrcIp().isEmpty())&&
+                    (inputSipMessage.getSrcPort().isEmpty())
                     ) {
                             uasSdpIp = inputSipMessage.getSdpIp();
                             uasSdpPort = inputSipMessage.getSdpPort();
@@ -1054,16 +1119,15 @@ public class SIPflow {
                     + ", uasSdpPort=" + uasSdpPort + ", uasSdpCodec=" 
                     + uasSdpCodec + ", lastCseq=" + lastCseq + '}';
         }
-
     }
 
     private static class SipMessage {
 
-        private Date timeDateStamp;	
-	private String srcIp;
-	private String srcPort;
-	private String dstIp;
-	private String dstPort;
+        private final Date timeDateStamp;	
+	private final String srcIp;
+	private final String srcPort;
+	private final String dstIp;
+	private final String dstPort;
 	private String req;
 	private String method;
 	private String response;
@@ -1079,7 +1143,7 @@ public class SIPflow {
 	private String sdpCodec;
 	private String ua;
 	private String cSeq;
-	private String message;
+	private final String message;
         
 	SipMessage(
                     String inputMessage,
@@ -1530,9 +1594,7 @@ public class SIPflow {
         public void run() {
             try {
                 obj.Gui(); 
-            } catch (InterruptedException ex) {
-                Logger.getLogger(SIPflow.class.getName()).log(Level.SEVERE, null, ex);
-            } catch (IOException ex) {
+            } catch (InterruptedException | IOException ex) {
                 Logger.getLogger(SIPflow.class.getName()).log(Level.SEVERE, null, ex);
             }
         }
